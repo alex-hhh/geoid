@@ -417,15 +417,33 @@
 (define (valid-geoid? geoid)
   (and (>= geoid the-first-geoid) (<= geoid the-last-geoid)))
 
-;; Produce a random GEOID at the specified LEVEL.  This is used by the test
-;; suite.
-(: random-geoid (-> Integer Integer))
-(define (random-geoid level)
-  (define linfo (vector-ref level-information level))
-  (define face (random 6))
-  (define ix (random (level-info-max-coord linfo)))
-  (define iy (random (level-info-max-coord linfo)))
-  (pack face ix iy level))
+;; Produce a random GEOID at the specified LEVEL, and if PARENT is specified,
+;; the geoid will be a sub-geoid of it.  This is used by the test suite, and
+;; can also be used by other test suites.
+(: random-geoid (->* (Integer) (#:parent (U Integer #f)) Integer))
+(define (random-geoid level #:parent (parent #f))
+  (when (and parent (not (valid-geoid? parent)))
+    (raise-argument-error 'parent "valid-geoid?" parent))
+  (when (or (< level 0) (>= level max-level))
+    (raise-argument-error 'level (format "(between/c 0 ~a)" max-level) level))
+  (if parent
+      (let-values ([(pface pix piy plevel) (unpack parent)])
+        (unless (> plevel level)
+          (raise-argument-error 'level "less than the parent level" level))
+        (let* ([d (- plevel level)]
+               [max-coord (arithmetic-shift 1 d)]
+               [ix (random max-coord)]
+               [iy (random max-coord)])
+          (pack
+           pface
+           (bitwise-ior (arithmetic-shift pix d) ix)
+           (bitwise-ior (arithmetic-shift piy d) iy)
+           level)))
+      (let* ([linfo (vector-ref level-information level)]
+             [face (random 6)]
+             [ix (random (level-info-max-coord linfo))]
+             [iy (random (level-info-max-coord linfo))])
+        (pack face ix iy level))))
 
 (: geoid-level (-> Integer Integer))
 (define (geoid-level geoid)
@@ -452,8 +470,6 @@
 (define (geoid-face geoid)
   (bitwise-and (arithmetic-shift geoid (- (add1 (* 2 max-level)))) #x7))
 
-;; Return the integer value that you can add to a geoid to obtain the next
-;; geoid at the same level.
 (: geoid-stride (-> Integer Integer))
 (define (geoid-stride geoid)
   (define linfo (vector-ref level-information (geoid-level geoid)))
@@ -492,9 +508,6 @@
   (define-values (face ix iy level) (unpack id))
   (decode face ix iy level))
 
-;; Return the four leaf (level 0) geoids representing the corner of the geoid
-;; ID.  Note that, while the GEOIDs are in CCW order, they are not necessarily
-;; start from top-left and they are not in the order of their integer value.
 (: leaf-corners (-> Integer (List Integer Integer Integer Integer)))
 (define (leaf-corners id)
   (unless (valid-geoid? id)
@@ -509,7 +522,6 @@
    (pack face (+ min-ix max-coord) (+ min-iy max-coord) 0)
    (pack face (+ min-ix max-coord) min-iy 0)))
 
-;; Split a geoid into the four geoids one level down.
 (: split-geoid (-> Integer (List Integer Integer Integer Integer)))
 (define (split-geoid id)
   (unless (valid-geoid? id)
@@ -526,11 +538,6 @@
    (pack face (+ min-ix 1) (+ min-iy 1) new-level)
    (pack face (+ min-ix 1) min-iy new-level)))
 
-;; Create an outline of the geoid ID as a list of leaf geoids going around the
-;; edge in CCW direction.  As with `leaf-corners`, the first leaf geoid might
-;; not necessarily be in the top left corner.  #:steps defines the number of
-;; intermediate geoids to put around each side, wile #:closed?  defines
-;; whether to add the first geoid as the last element in the loop.
 (: leaf-outline (->* (Integer) (#:steps Integer #:closed? Boolean)
                      (Listof Integer)))
 (define (leaf-outline id #:steps (steps 10) #:closed? (closed? #t))
@@ -552,8 +559,6 @@
      (pack face (+ min-ix delta) min-iy 0))
    (if closed? (list (pack face min-ix min-iy 0)) '())))
 
-;; Return the start and end leaf geoids betwen which all geoids inside this
-;; one are located.
 (: leaf-span (-> Integer (Values Integer Integer)))
 (define (leaf-span id)
   (unless (valid-geoid? id)
@@ -576,9 +581,6 @@
   (define-values (start end) (leaf-span this-geoid))
   (and (>= other-geoid start) (< other-geoid end)))
 
-;; Return the latitude/longitude rectangle for a GEOID.  Note that a geoid
-;; does not correspond 1:1 to such a rectangle, and the returned rectangle
-;; will contain more points than just this geoid.
 (: lat-lng-rect (-> Integer (Values Real Real Real Real)))
 (define (lat-lng-rect geoid)
   (unless (valid-geoid? geoid)
@@ -612,3 +614,17 @@
    (- (min lng0 lng1 lng2 lng3) e)
    (+ (max lat0 lat1 lat2 lat3) e)
    (+ (max lng0 lng1 lng2 lng3) e)))
+
+;; The two functions below can be used to convert geoids to a representation
+;; suitable for storing into a SQLite database, see the scribble documentation
+;; for details.
+(: sqlite-offset Integer)
+(define sqlite-offset #x8000000000000000)
+
+(: geoid->sqlite-integer (-> Integer Integer))
+(define (geoid->sqlite-integer geoid)
+  (- geoid sqlite-offset))
+
+(: sqlite-integer->geoid (-> Integer Integer))
+(define (sqlite-integer->geoid i)
+  (+ i sqlite-offset))

@@ -59,6 +59,9 @@ from it, to convert it to a signed number.  This will preserve the ordering
 properties of the geoid.  Just remember to add back 2@superscript{63} back to
 it before using a geoid retrived from the database this way.
 
+The @racket[geoid->sqlite-integer] and @racket[sqlite-integer->geoid]
+functions can be used to convert to and from SQLite representation.
+
 @section{API Documentation}
 
 @defproc*[([(first-valid-geoid) exact-integer?]
@@ -223,5 +226,34 @@ it before using a geoid retrived from the database this way.
   bounding boxes don't overlap exactly, so the bounding box will always be
   bigger than then @racket[geoid] and there will be other geoids which are
   inside the bounding box, but not in the geoid.
+
+}
+
+@defproc[(random-geoid [level exact-integer?] [#:parent parent (or/c exact-integer #f)]) exact-integer?]{
+
+  Generate a random geoid at the specified @racket[level].  If @racket[parent]
+  is specified, the level has to be lower (mode detailed) than the
+  @racket[parent] and a geoid which is inside the @racket[parent] will be
+  generated.
+
+  This function is intended to generate geoids for unit tests.
+
+}
+
+@defproc*[([(geoid->sqlite-integer [geoid exact-integer?]) exact-integer?]
+          [(sqlite-integer->geoid [i exact-integer?]) exact-integer?])]{
+
+  Convert a @racket[geoid] into an integer suitable for storage into a SQLite
+  database, or convert an integer stored in the database back into a geoid.
+
+  Geoids are unsigned 64 bit values, and SQLite will only store signed values.
+  Unsigned 64 bit values which are greater than the maximum signed 64 bit
+  value will be converted to floating point numbers, loosing precision.  This
+  means that geoids cannot be stored directly into a SQLite database.
+
+  These pair of functions subtract 2@superscript{63} from the geoid (or add
+  that value back) to make sure the value is stored correctly.  The ordering
+  of the geoids is preserved, so they can still be used to index geograpic
+  information.
 
 }

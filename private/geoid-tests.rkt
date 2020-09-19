@@ -128,7 +128,7 @@
        (define expected-encoding
          (+ (arithmetic-shift f (add1 (* 2 max-level)))
             (arithmetic-shift 1 (* 2 l))))
-       
+
        (define p (pack f 0 0 l))
        (check-equal? p expected-encoding "bad encoding")
 
@@ -146,7 +146,7 @@
        (define-values (face1 x1 y1 level1) (unpack (+ p (geoid-stride p))))
        (check-equal? face1 f "bad face")
        (check-equal? level1 l "bad level")
-       
+
        ))
    (test-case "Encodings"
      ;; Check the encodings of the corners for each face at each level pack
@@ -177,7 +177,7 @@
                    (check-equal? face1 (add1 f) "geoid-stride: bad face (add1)")
                    (check-equal? face1 f "geoid-stride: bad face"))
                (check-equal? level1 l "geoid-stride: bad level"))))
-              
+
        ))))
 
 
@@ -338,6 +338,23 @@
 (define geoid-manipulation-test-suite
   (test-suite
    "Geoid Manipulation"
+
+   (test-case "random-geoid"
+     (check-exn exn:fail?
+                (lambda ()
+                  (random-geoid 0 #:parent (random-geoid 0))))
+     (check-exn exn:fail?
+                (lambda ()
+                  (random-geoid 4 #:parent (random-geoid 2))))
+     (for ([k (in-range 100)])
+       (define plevel (+ 1 (random 29)))
+       (define p (random-geoid plevel))
+       (for ([j (in-range 100)])
+         (define clevel (random plevel))
+         (define c (random-geoid clevel #:parent p))
+         (check-equal? p (enclosing-geoid c plevel))
+         (check-true (contains-geoid? p c)))))
+
    (test-case "leaf-geoid?"
      (for ([k (in-range 10000)])
        (define id (random-geoid 0))
@@ -353,7 +370,7 @@
 
      (check-exn exn:fail?
                 (lambda () (enclosing-geoid (random-geoid 30))))
-     
+
      (for ([k (in-range 10000)])
        (define id (random-geoid (add1 (random 29))))
        ;; NOTE that split-geoid does not return the four splits in geoid

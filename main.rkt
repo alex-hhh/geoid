@@ -33,10 +33,15 @@
  split-geoid                            ; tested, doc
  leaf-geoid?                            ; tested, doc
  leaf-span                              ; tested, doc
- contains-geoid?                        ; doc
+ contains-geoid?                        ; tested, doc
  leaf-corners                           ; doc
  leaf-outline                           ; doc
- lat-lng-rect
+ lat-lng-rect                           ; doc
+
+ geoid->sqlite-integer                  ; doc
+ sqlite-integer->geoid                  ; doc
+
+ random-geoid                           ; tested, doc
  )
 
 
