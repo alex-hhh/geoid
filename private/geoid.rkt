@@ -479,7 +479,7 @@
 (define (enclosing-geoid geoid new-level)
   (unless (valid-geoid? geoid)
     (raise-argument-error 'geoid "valid-geoid?" geoid))
-  (when (or (< new-level 0) (>= new-level max-level))
+  (when (or (< new-level 0) (> new-level max-level))
     (raise-argument-error 'new-level (format "(between/c 0 ~a)" max-level) new-level))
   (let ([level (geoid-level geoid)])
     (cond ((= level new-level) geoid)
