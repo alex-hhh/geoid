@@ -26,8 +26,6 @@
  ;; geoid-face                          ; tested, not exported
  geoid-stride                           ; tested, doc
 
- lat-lng->geoid                         ; tested, doc
- geoid->lat-lng                         ; tested, doc
 
  enclosing-geoid                        ; tested, doc
  split-geoid                            ; tested, doc
@@ -35,13 +33,29 @@
  leaf-span                              ; tested, doc
  contains-geoid?                        ; tested, doc
  leaf-corners                           ; doc
+
+ adjacent-geoids                        ; tested, doc
+
+ approximate-area-for-geoid             ; doc
+ approximate-area-for-level             ; doc
+
+ ;; Testing Helpers
+
+ random-geoid                           ; tested, doc
  leaf-outline                           ; doc
- lat-lng-rect                           ; doc
+
+ ;; Storing/Retrieving from a SQLite database
 
  geoid->sqlite-integer                  ; doc
  sqlite-integer->geoid                  ; doc
 
- random-geoid                           ; tested, doc
+ ;; Conversion from latitude/longitude and back
+
+ lat-lng->geoid                         ; tested, doc
+ geoid->lat-lng                         ; tested, doc
+ lat-lng-rect                           ; doc
+
+ distance-between-geoids                ; doc
  )
 
 

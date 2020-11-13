@@ -48,19 +48,90 @@ the same API and functionality as that library.
 
 ]
 
-@section{Storing geoids in a SQLite database}
+@section{Converting to and from Latitude/Longitude}
 
-Geoids use all 64 bits, and more than half of them have the highest bit set.
-SQLite will store numbers as signed 64 bits and convert unsigned 64 bit
-numbers to 64 bit floating points.
+@defproc*[([(lat-lng->geoid [lat real?] [lng real?]) exact-integer?]
+          [(geoid->lat-lng [geoid exact-integer?]) (values real? real?)])]{
 
-To store geoids in a SQLLite database, you need to subtract 2@superscript{63}
-from it, to convert it to a signed number.  This will preserve the ordering
-properties of the geoid.  Just remember to add back 2@superscript{63} back to
-it before using a geoid retrived from the database this way.
+  Convert a geographic coordinate (latidude, longitude) to and from a geoid.
+  The returned geoid will be at the highest level of precision (level
+  @racket[0]), but @racket[geoid->lat-lng] will also accept geoids at a lower
+  precision (a level higher than @racket[0]).
 
-The @racket[geoid->sqlite-integer] and @racket[sqlite-integer->geoid]
-functions can be used to convert to and from SQLite representation.
+  @racket[geoid->lat-lng] will return the latitude/longitude coordinates
+  corresponding to the center of the geoid and this will introduce an error in
+  the conversion from latitude/longitude to geoid and back.  For geoids at
+  level @racket[0], emprirical testing showed this to be less than 9.75
+  millimeters, which is sufficient for the type of applications intended for
+  this libary.  Note that this error is not constant accross the globe, and
+  9.75 millimeters is the maximum error seen.
+
+}
+
+@defproc[(lat-lng-rect [geoid exact-integer?]) (values real? real? real? real?)]{
+
+  Return the latitude / longitude rectangle which encloses the @racket[geoid].
+  The four values returned are: minimum latitude, minimum longitude, maximum
+  latitude, maximum longitude.  The bounds are slightly extended, to ensure
+  all leaf geoids are inside the bounding box.
+
+  The bounding box encloses the @racket[geoid] minimally, but geoids and
+  bounding boxes don't overlap exactly, so the bounding box will always be
+  bigger than then @racket[geoid] and there will be other geoids which are
+  inside the bounding box, but not in the geoid.
+
+}
+
+@section{Storing and Retrieving from a SQLite database}
+
+@defproc*[([(geoid->sqlite-integer [geoid exact-integer?]) exact-integer?]
+          [(sqlite-integer->geoid [i exact-integer?]) exact-integer?])]{
+
+  Convert a @racket[geoid] into an integer suitable for storage into a SQLite
+  database, or convert an integer stored in the database back into a geoid.
+
+  Geoids are unsigned 64 bit values, and more than half of them have the
+  highest bit set.  SQLite will store numbers as signed 64 bits and convert
+  unsigned 64 bit numbers greater than the maximum signed 64 bit value to
+  floating point numbers, loosing precision.  This means that geoids cannot be
+  stored directly into a SQLite database.
+
+  These pair of functions subtract 2@superscript{63} from the geoid (or add
+  that value back) to make sure the value is stored correctly.  The ordering
+  of the geoids is preserved, so they can still be used to index geograpic
+  information.
+
+}
+
+@section{Generating Test Data}
+
+@defproc[(random-geoid [level exact-integer?] [#:parent parent (or/c exact-integer #f)]) exact-integer?]{
+
+  Generate a random geoid at the specified @racket[level].  If @racket[parent]
+  is specified, the level has to be lower (mode detailed) than the
+  @racket[parent] and a geoid which is inside the @racket[parent] will be
+  generated.
+
+  This function is intended to generate geoids for unit tests.
+
+}
+
+@defproc[(leaf-outline [geoid exact-integer?]
+                       [#:steps steps (and/c integer? positive?) 10]
+                       [#:closed? closed? boolean? #t])
+         (listof exact-integer?)]{
+
+  Return a sequence of leaf geoids representing the outline of @racket[geoid].
+  This can be used to obtain the outline of a geoid to display on a map.
+
+  @racket[steps] specifies the number of geoids ot put on each side of the
+  rectangle, while @racket[closed?] specifies if the first geoid should be
+  duplicated as the last element in the list, to close the loop.
+
+  As with @racket[leaf-corners], geoids are placed in counter-clockwise order,
+  but there is no guarantee about the start corner of the loop.
+
+}
 
 @section{API Documentation}
 
@@ -95,20 +166,6 @@ functions can be used to convert to and from SQLite representation.
 
 }
 
-@defproc*[([(lat-lng->geoid [lat real?] [lng real?]) exact-integer?]
-          [(geoid->lat-lng [geoid exact-integer?]) (values real? real?)])]{
-
-  Convert a geographic coordinate (latidude, longitude) to and from a geoid.
-  The returned geoid will be at the highest level of precision (level
-  @racket[0]).
-
-  The conversion from latitude/longitude to geoid and back has a small amount
-  of error, emprirical testing showed this to be less than 7 millimeters,
-  which is sufficient for the type of applications intended for this libary.
-  Note that this error is not constant accross the globe, and 7 millimeters is
-  the maximum error seen.
-
-}
 
 @defproc[(geoid-level [geoid exact-integer?]) (integer-in 0 30)]{
 
@@ -198,62 +255,38 @@ functions can be used to convert to and from SQLite representation.
 
 }
 
-@defproc[(leaf-outline [geoid exact-integer?]
-                       [#:steps steps (and/c integer? positive?) 10]
-                       [#:closed? closed? boolean? #t])
-         (listof exact-integer?)]{
+@defproc[(adjacent-geoids [geoid exact-integer?])
+         (list-of integer?)]{
 
-  Return a sequence of leaf geoids representing the outline of @racket[geoid].
-  This can be used to obtain the outline of a geoid to display on a map.
+  Return the adjacent geoids which border @racket[geoid].  The returned geoids
+  will be at the same level as @racket[geoids].
 
-  @racket[steps] specifies the number of geoids ot put on each side of the
-  rectangle, while @racket[closed?] specifies if the first geoid should be
-  duplicated as the last element in the list, to close the loop.
-
-  As with @racket[leaf-corners], geoids are placed in counter-clockwise order,
-  but there is no guarantee about the start corner of the loop.
+  Normally, 8 geoids are returned, but only 7 are returned if @racket[geoid]
+  is in a corner of a face and only 4 geoids if it is a face level geoid.
 
 }
 
-@defproc[(lat-lng-rect [geoid exact-integer?]) (values real? real? real? real?)]{
 
-  Return the latitude / longitude rectangle which encloses the @racket[geoid].
-  The four values returned are: minimum latitude, minimum longitude, maximum
-  latitude, maximum longitude.  The bounds are slightly extended, to ensure
-  all leaf geoids are inside the bounding box.
+@defproc*[([(approximate-area-for-geoid [geoid exact-integer?]) real?]
+           [(approximate-area-for-level [level (between/c 0 30)]) real?])]{
 
-  The bounding box encloses the @racket[geoid] minimally, but geoids and
-  bounding boxes don't overlap exactly, so the bounding box will always be
-  bigger than then @racket[geoid] and there will be other geoids which are
-  inside the bounding box, but not in the geoid.
+  Return the approximate area, in square meters, of @racket[geoid] or
+  @racket[level].  The area is calculated by dividing the earth surface by the
+  number of geoids at that level and it is approximate because there will be
+  geoids with smaller area and larger area than this at each level.
 
-}
-
-@defproc[(random-geoid [level exact-integer?] [#:parent parent (or/c exact-integer #f)]) exact-integer?]{
-
-  Generate a random geoid at the specified @racket[level].  If @racket[parent]
-  is specified, the level has to be lower (mode detailed) than the
-  @racket[parent] and a geoid which is inside the @racket[parent] will be
-  generated.
-
-  This function is intended to generate geoids for unit tests.
+  These functions can be used to get a general idea of the surface covered by
+  a geoid.
 
 }
 
-@defproc*[([(geoid->sqlite-integer [geoid exact-integer?]) exact-integer?]
-          [(sqlite-integer->geoid [i exact-integer?]) exact-integer?])]{
+@defproc[(distance-between-geoids [g1 exact-integer?] [g2 exact-integer?]) real?]{
 
-  Convert a @racket[geoid] into an integer suitable for storage into a SQLite
-  database, or convert an integer stored in the database back into a geoid.
-
-  Geoids are unsigned 64 bit values, and SQLite will only store signed values.
-  Unsigned 64 bit values which are greater than the maximum signed 64 bit
-  value will be converted to floating point numbers, loosing precision.  This
-  means that geoids cannot be stored directly into a SQLite database.
-
-  These pair of functions subtract 2@superscript{63} from the geoid (or add
-  that value back) to make sure the value is stored correctly.  The ordering
-  of the geoids is preserved, so they can still be used to index geograpic
-  information.
+  Return the distance, in meters, on the Earth surface between the center of
+  geoids @racket[g1] and @racket[g2].  For leaf geoids this is a good
+  appoximation for the distance between the locations represented by these
+  geoids, since the size of a leaf geoid is approximately 8.5 millimeters.
 
 }
+
+

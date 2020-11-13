@@ -265,8 +265,8 @@
       (define max-coord
         (arithmetic-shift 1 (- max-level id)))
       (define epsilon
-        (if (> max-coord 1)
-            (exact->inexact (* 0.5 (/ 1 (sub1 max-coord))))
+        (if (> max-coord 0)
+            (exact->inexact (* 0.5 (/ 1 max-coord)))
             0))
       (level-info id mask sentinel max-coord epsilon)))
 
@@ -295,44 +295,38 @@
   (define sin-Θ (sin Θ))
   (define cos-Φ (/ x sin-Θ))
   (define sin-Φ (/ y sin-Θ))
-  (: Φ Number)               ; prevent TR from optimizing the real? call below
-  (define Φ (acos cos-Φ))
-  ;;(define Φ (atan (/ y x)))
-  (define longitude (radians->degrees (if (real? Φ) Φ (real-part Φ))))
-  ;; Note that we need bot the sine and cosine of Φ, to determine the correct
-  ;; quadrant.
-  (values (- 90.0 (radians->degrees Θ)) (if (< sin-Φ 0) (- longitude) longitude)))
+  (define Φ (atan y x))
+  (values (- 90.0 (radians->degrees Θ)) (radians->degrees Φ)))
 
-;; Encode a latitude/longitude pair info the components of a geoid: the face,
-;; the x, y coordinates on the plane for Hilbert distance computation and the
-;; level.
-(: encode (-> Real Real Integer
+;; Encode a unit vector defined by x, y z info the components of a geoid: the
+;; face, the x, y coordinates on the plane for Hilbert distance computation
+;; and the level.
+(: encode (-> Real Real Real Integer
               (Values Integer
                       Integer
                       Integer
                       Integer)))
-(define (encode lat lon level)
-  (define-values (x y z) (lat-lng->unit-vector lat lon))
-
+(define (encode x y z level)
   (define-values (d f) (find-face x y z))
   (define-values (u v) ((face-xyzd->uv f) x y z d))
-  ;; (printf "x = ~a, y = ~a, z = ~a; u = ~a, v = ~a~%" x y z u v)
+  ;; (printf "x = ~a, y = ~a, z = ~a; d = ~a u = ~a, v = ~a~%" x y z d u v)
 
   (match-define (level-info id mask sentinel max-coord epsilon)
     (vector-ref level-information level))
-  (define semicircle-mask (sub1 max-coord))
+  (define m (sub1 max-coord))
 
-  (define iu (max 0 (min semicircle-mask (exact-truncate (* u semicircle-mask)))))
-  (define iv (max 0 (min semicircle-mask (exact-truncate (* v semicircle-mask)))))
+  (define iu (max 0 (min m (exact-floor (* u max-coord)))))
+  (define iv (max 0 (min m (exact-floor (* v max-coord)))))
   (values (face-id f)
           (cast iu Integer)
           (cast iv Integer)
           level))
 
-;; Decode a latidude/longitude pair from the components of a geoid: the face,
-;; the x, y integer coordinates and the level.
+;; Decode the unit vector from the components of a geoid: the face, the x, y
+;; integer coordinates and the level.  Returns three values, the x, y z
+;; coordinates of the unit vector.
 (: decode (-> Integer Integer Integer Integer
-              (Values Real Real)))
+              (Values Real Real Real)))
 (define (decode face ix iy level)
   (when (> face 5)
     ; there are only 6 faces, from 0 to 5, but the 3 bits used to encode them
@@ -342,16 +336,13 @@
 
   (match-define (level-info id ask sentinel max-coord epsilon)
     (vector-ref level-information level))
-  (define semicircle-mask (sub1 max-coord))
 
   (: u Real)
-  (define u (+ epsilon (exact->inexact (/ ix semicircle-mask))))
+  (define u (+ epsilon (exact->inexact (/ ix max-coord))))
   (: v Real)
-  (define v (+ epsilon (exact->inexact (/ iy semicircle-mask))))
+  (define v (+ epsilon (exact->inexact (/ iy max-coord))))
   (define f (list-ref all-faces face))
-  (define-values (x y z) ((face-uv->xyz f) u v))
-  ;; (printf "x = ~a, y = ~a, z = ~a; u = ~a, v = ~a~%" x y z u v)
-  (unit-vector->lat-lng x y z))
+  ((face-uv->xyz f) u v))
 
 ;; Pack the geoid components into a single 64 bit integer.
 (: pack (-> Integer Integer Integer Integer
@@ -392,6 +383,16 @@
         (values face ix iy (level-info-id linfo)))
       (error (format "unpack: cannot find level information for ~a" d))))
 
+(: unit-vector->geoid (-> Real Real Real Integer Integer))
+(define (unit-vector->geoid x y z level)
+  (define-values (face ix iy _level) (encode x y z level))
+  (pack face ix iy level))
+
+(: geoid->unit-vector (-> Integer (Values Real Real Real)))
+(define (geoid->unit-vector geoid)
+  (define-values (face ix iy level) (unpack geoid))
+  (decode face ix iy level))
+
 
 ;;.................................................................. API ....
 
@@ -424,7 +425,7 @@
 (define (random-geoid level #:parent (parent #f))
   (when (and parent (not (valid-geoid? parent)))
     (raise-argument-error 'parent "valid-geoid?" parent))
-  (when (or (< level 0) (>= level max-level))
+  (when (or (< level 0) (> level max-level))
     (raise-argument-error 'level (format "(between/c 0 ~a)" max-level) level))
   (if parent
       (let-values ([(pface pix piy plevel) (unpack parent)])
@@ -459,7 +460,7 @@
       (level-info-id linfo)
       (error (format "geoid-level: cannot find level information for ~a" geoid))))
 
-;; Equivalent to (= (geoid-level geoid) 1), but faster
+;; Equivalent to (= (geoid-level geoid) 0), but faster
 (: leaf-geoid? (-> Integer Boolean))
 (define (leaf-geoid? geoid)
   ;; Leaf GEOIDS have 1 as their least significant bit, so they are always
@@ -498,15 +499,15 @@
 
 (: lat-lng->geoid (-> Real Real Integer))
 (define (lat-lng->geoid lat lon)
-  (define-values (face ix iy level) (encode lat lon 0))
-  (pack face ix iy level))
+  (define-values (x y z) (lat-lng->unit-vector lat lon))
+  (unit-vector->geoid x y z 0))
 
 (: geoid->lat-lng (-> Integer (Values Real Real)))
 (define (geoid->lat-lng id)
   (unless (valid-geoid? id)
     (raise-argument-error 'geoid "valid-geoid?" id))
-  (define-values (face ix iy level) (unpack id))
-  (decode face ix iy level))
+  (define-values (x y z) (geoid->unit-vector id))
+  (unit-vector->lat-lng x y z))
 
 (: leaf-corners (-> Integer (List Integer Integer Integer Integer)))
 (define (leaf-corners id)
@@ -581,6 +582,225 @@
   (define-values (start end) (leaf-span this-geoid))
   (and (>= other-geoid start) (< other-geoid end)))
 
+
+;;...................................................... Adjacent Geoids ....
+
+;; Find the face that is opposite to the specified face
+(: opposite-face (-> Integer Integer))
+(define (opposite-face face)
+  (case face
+    ((0) 3)
+    ((1) 4)
+    ((2) 5)
+    ((3) 0)
+    ((4) 1)
+    ((5) 2)
+    (else (raise-argument-error 'face "(between/c 0 5)" face))))
+
+(: top-neighbour (-> Integer Integer))
+(define (top-neighbour face)
+  (case face
+    ((0) 2)
+    ((1) 3)
+    ((2) 4)
+    ((3) 5)
+    ((4) 0)
+    ((5) 1)
+    (else (raise-argument-error 'face "(between/c 0 5)" face))))
+
+(: bottom-neigbour (-> Integer Integer))
+(define (bottom-neigbour face)
+  (case face
+    ((0) 5)
+    ((1) 0)
+    ((2) 1)
+    ((3) 2)
+    ((4) 3)
+    ((5) 4)
+    (else (raise-argument-error 'face "(between/c 0 5)" face))))
+
+(: right-neigbour (-> Integer Integer))
+(define (right-neigbour face)
+  (case face
+    ((0) 1)
+    ((1) 2)
+    ((2) 3)
+    ((3) 4)
+    ((4) 5)
+    ((5) 0)
+    (else (raise-argument-error 'face "(between/c 0 5)" face))))
+
+(: left-neighbour (-> Integer Integer))
+(define (left-neighbour face)
+  (case face
+    ((0) 4)
+    ((1) 5)
+    ((2) 0)
+    ((3) 1)
+    ((4) 2)
+    ((5) 3)
+    (else (raise-argument-error 'face "(between/c 0 5)" face))))
+
+(: adjacent-geoids (-> Integer (Listof Integer)))
+(define (adjacent-geoids id)
+  (unless (valid-geoid? id)
+    (raise-argument-error 'id "valid-geoid?" id))
+  (define-values (face ix iy level) (unpack id))
+  (define m (sub1 (level-info-max-coord (vector-ref level-information level))))
+  (if (= level max-level)
+      ;; For geoids that are at face level, the neighbours are the four
+      ;; adjacent faces.
+      (let ((opposite (opposite-face face)))
+        (for/list ([f (in-range 6)]
+                   #:unless (or (equal? f face) (equal? f opposite)))
+          (pack f ix iy level)))
+      ;; Check if the geoid is on an edge or corner, as these geoids will have
+      ;; adjacent geoids on other faces
+      (let ([right-edge (= ix m)]
+            [left-edge (= ix 0)]
+            [top-edge (= iy m)]
+            [bottom-edge (= iy 0)])
+        (cond ((and top-edge left-edge)
+               (append
+                (case face
+                  ((0) (list (pack 2 0 m level) (pack 2 0 (sub1 m) level)
+                             (pack 4 0 m level) (pack 4 0 (sub1 m) level)))
+                  ((1) (list (pack 3 0 m level) (pack 3 0 (sub1 m) level)
+                             (pack 5 0 m level) (pack 5 1 m level)))
+                  ((2) (list (pack 0 0 m level) (pack 0 1 m level)
+                             (pack 4 0 m level) (pack 4 0 (sub1 m) level)))
+                  ((3) (list (pack 1 0 m level) (pack 1 1 m level)
+                             (pack 5 0 m level) (pack 5 0 (sub1 m) level)))
+                  ((4) (list (pack 0 0 m level) (pack 0 0 (sub1 m) level)
+                             (pack 2 0 m level) (pack 2 1 m level)))
+                  ((5) (list (pack 1 0 m level) (pack 1 0 (sub1 m) level)
+                             (pack 3 0 m level) (pack 3 1 m level)))
+                  (else (error "bad face/top+left corner")))
+                (list
+                 (pack face (add1 ix) iy level)
+                 (pack face (add1 ix) (sub1 iy) level)
+                 (pack face ix (sub1 iy) level))))
+              ((and bottom-edge left-edge)
+               (append
+                (case face
+                  ((0) (list (pack 4 m m level) (pack 4 (sub1 m) m level)
+                             (pack 5 m 0 level) (pack 5 m 1 level)))
+                  ((1) (list (pack 0 m 0 level) (pack 0 m 1 level)
+                             (pack 5 m m level) (pack 5 (sub1 m) m level)))
+                  ((2) (list (pack 0 m m level) (pack 0 (sub1 m) m level)
+                             (pack 1 m 0 level) (pack 1 m 1 level)))
+                  ((3) (list (pack 1 m m level) (pack 1 (sub1 m) m level)
+                             (pack 2 m 0 level) (pack 2 m 1 level)))
+                  ((4) (list (pack 3 m 0 level) (pack 3 m 1 level)
+                             (pack 2 m m level) (pack 2 (sub1 m) m level)))
+                  ((5) (list (pack 3 m m level) (pack 3 (sub1 m) m level)
+                             (pack 4 m 0 level) (pack 4 m 1 level)))
+                  (else (error "bad face/bottom+left corner")))
+                (list
+                 (pack face ix (add1 iy) level)
+                 (pack face (add1 ix) (add1 iy) level)
+                 (pack face (add1 ix) iy level))))
+              ((and top-edge right-edge)
+               (append
+                (case face
+                  ((0) (list (pack 1 m 0 level) (pack 1 (sub1 m) 0 level)
+                             (pack 2 0 0 level) (pack 2 0 1 level)))
+                  ((1) (list (pack 3 0 0 level) (pack 3 0 1 level)
+                             (pack 2 m 0 level) (pack 2 (sub1 m) 0 level)))
+                  ((2) (list (pack 3 m 0 level) (pack 3 (sub1 m) 0 level)
+                             (pack 4 0 0 level) (pack 4 0 1 level)))
+                  ((3) (list (pack 4 m 0 level) (pack 4 (sub1 m) 0 level)
+                             (pack 5 0 0 level) (pack 5 0 1 level)))
+                  ((4) (list (pack 0 0 0 level) (pack 0 0 1 level)
+                             (pack 5 m 0 level) (pack 5 (sub1 m) 0 level)))
+                  ((5) (list (pack 0 m 0 level) (pack 0 (sub1 m) 0 level)
+                             (pack 1 0 0 level) (pack 1 0 1 level)))
+                  (else (error "bad face/top+right corner")))
+                (list
+                 (pack face (sub1 ix) iy level)
+                 (pack face (sub1 ix) (sub1 iy) level)
+                 (pack face ix (sub1 iy) level))))
+              ((and bottom-edge right-edge)
+               (append
+                (case face
+                  ((0) (list (pack 1 0 0 level) (pack 1 1 0 level)
+                             (pack 5 m m level) (pack 5 m (sub1 m) level)))
+                  ((1) (list (pack 0 m m level) (pack 0 m (sub1 m) level)
+                             (pack 2 0 0 level) (pack 2 1 0 level)))
+                  ((2) (list (pack 3 0 0 level) (pack 3 1 0 level)
+                             (pack 1 m m level) (pack 1 m (sub1 m) level)))
+                  ((3) (list (pack 2 m m level) (pack 2 m (sub1 m) level)
+                             (pack 4 0 0 level) (pack 4 1 0 level)))
+                  ((4) (list (pack 3 m m level) (pack 3 m (sub1 m) level)
+                             (pack 5 0 0 level) (pack 5 1 0 level)))
+                  ((5) (list (pack 0 0 0 level) (pack 0 1 0 level)
+                             (pack 4 m m level) (pack 4 m (sub1 m) level)))
+                  (else (error "bad face/bottom+right corner")))
+                (list
+                 (pack face (sub1 ix) iy level)
+                 (pack face (sub1 ix) (add1 iy) level)
+                 (pack face ix (add1 iy) level))))
+              (top-edge
+               (append
+                (let ([n (top-neighbour face)])
+                  (list (pack n 0 (- m (add1 ix)) level)
+                        (pack n 0 (- m ix) level)
+                        (pack n 0 (- m (sub1 ix)) level)))
+                (list
+                 (pack face (sub1 ix) iy level)
+                 (pack face (sub1 ix) (sub1 iy) level)
+                 (pack face ix (sub1 iy) level)
+                 (pack face (add1 ix) (sub1 iy) level)
+                 (pack face (add1 ix) iy level))))
+              (left-edge
+               (append
+                (let ([n (left-neighbour face)])
+                  (list (pack n (- m (add1 iy)) m level)
+                        (pack n (- m iy) m level)
+                        (pack n (- m (sub1 iy)) m level)))
+                (list
+                 (pack face ix (add1 iy) level)
+                 (pack face (add1 ix) (add1 iy) level)
+                 (pack face (add1 ix) iy level)
+                 (pack face (add1 ix) (sub1 iy) level)
+                 (pack face ix (sub1 iy) level))))
+              (bottom-edge
+               (append
+                (let ([n (bottom-neigbour face)])
+                  (list (pack n m (add1 ix) level)
+                        (pack n m ix level)
+                        (pack n m (sub1 ix) level)))
+                (list
+                 (pack face (add1 ix) iy level)
+                 (pack face (add1 ix) (add1 iy) level)
+                 (pack face ix (add1 iy) level)
+                 (pack face (sub1 ix) (add1 iy) level)
+                 (pack face (sub1 ix) iy level))))
+              (right-edge
+               (append
+                (let ([n (right-neigbour face)])
+                  (list (pack n (add1 iy) 0 level)
+                        (pack n iy 0 level)
+                        (pack n (sub1 iy) 0 level)))
+                (list
+                 (pack face ix (add1 iy) level)
+                 (pack face (sub1 ix) (add1 iy) level)
+                 (pack face (sub1 ix) iy level)
+                 (pack face (sub1 ix) (sub1 iy) level)
+                 (pack face ix (sub1 iy) level))))
+              (#t
+               (list (pack face ix (add1 iy) level)
+                     (pack face (add1 ix) (add1 iy) level)
+                     (pack face (add1 ix) iy level)
+                     (pack face (add1 ix) (sub1 iy) level)
+                     (pack face ix (sub1 iy) level)
+                     (pack face (sub1 ix) (sub1 iy) level)
+                     (pack face (sub1 ix) iy level)
+                     (pack face (sub1 ix) (add1 iy) level)))))))
+
+
+;;......................................................... lat/lng rect ....
+
 (: lat-lng-rect (-> Integer (Values Real Real Real Real)))
 (define (lat-lng-rect geoid)
   (unless (valid-geoid? geoid)
@@ -615,6 +835,9 @@
    (+ (max lat0 lat1 lat2 lat3) e)
    (+ (max lng0 lng1 lng2 lng3) e)))
 
+
+;;............................................. SQLite encoding/decoding ....
+
 ;; The two functions below can be used to convert geoids to a representation
 ;; suitable for storing into a SQLite database, see the scribble documentation
 ;; for details.
@@ -628,3 +851,35 @@
 (: sqlite-integer->geoid (-> Integer Integer))
 (define (sqlite-integer->geoid i)
   (+ i sqlite-offset))
+
+
+;;..................................................... Approximate Area ....
+
+(: earth-radius Real)
+(define earth-radius 6.3781e06)
+
+(: earth-surface-area Real)
+(define earth-surface-area (* 4 pi earth-radius earth-radius))
+
+(: approximate-area-for-geoid (-> Integer Real))
+(define (approximate-area-for-geoid id)
+  (unless (valid-geoid? id)
+    (raise-argument-error 'id "valid-geoid?" id))
+  (approximate-area-for-level (geoid-level id)))
+
+(: approximate-area-for-level (-> Integer Real))
+(define (approximate-area-for-level level)
+  (when (or (< level 0) (> level max-level))
+    (raise-argument-error 'level (format "(between/c 0 ~a)" max-level) level))
+  (define linfo (vector-ref level-information level))
+  (define max-coord (level-info-max-coord linfo))
+  (/ (/ (/ earth-surface-area 6) max-coord) max-coord))
+
+(: distance-between-geoids (-> Integer Integer Real))
+(define (distance-between-geoids g1 g2)
+  (define-values (x1 y1 z1) (geoid->unit-vector g1))
+  (define-values (x2 y2 z2) (geoid->unit-vector g2))
+  (define cos-Θ (+ (* x1 x2) (* y1 y2) (* z1 z2)))
+  ;; NOTE: small errors in the unit vector might bring the value below or
+  ;; above 1, making `acos` return a complex number.
+  (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ)))))
