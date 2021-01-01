@@ -324,7 +324,8 @@
 
 ;; Decode the unit vector from the components of a geoid: the face, the x, y
 ;; integer coordinates and the level.  Returns three values, the x, y z
-;; coordinates of the unit vector.
+;; coordinates of the unit vector.  The unit vector will point in the middle
+;; of the geoid cell.
 (: decode (-> Integer Integer Integer Integer
               (Values Real Real Real)))
 (define (decode face ix iy level)
@@ -343,6 +344,40 @@
   (define v (+ epsilon (exact->inexact (/ iy max-coord))))
   (define f (list-ref all-faces face))
   ((face-uv->xyz f) u v))
+
+(: decode-corners (-> Integer Integer Integer Integer
+                      (List (Vector Real Real Real)
+                            (Vector Real Real Real)
+                            (Vector Real Real Real)
+                            (Vector Real Real Real))))
+(define (decode-corners face ix iy level)
+  (when (> face 5)
+    ; there are only 6 faces, from 0 to 5, but the 3 bits used to encode them
+    ; can also represent 6 and 7.  Note that (pack 6 0 0) is used as the
+    ; sentinel geoh id (see below)
+    (error (format "Bad face id: ~a" face)))
+
+  (match-define (level-info id ask sentinel max-coord epsilon)
+    (vector-ref level-information level))
+
+  (: u1 Real)
+  (define u1 (exact->inexact (/ ix max-coord)))
+  (: u2 Real)
+  (define u2 (exact->inexact (min 1.0 (/ (add1 ix) max-coord))))
+  (: v1 Real)
+  (define v1 (exact->inexact (/ iy max-coord)))
+  (: v2 Real)
+  (define v2 (exact->inexact (min 1.0 (/ (add1 iy) max-coord))))
+  (define f (list-ref all-faces face))
+  (list
+   (let-values ([(x y z) ((face-uv->xyz f) u1 v1)])
+     (vector x y z))
+   (let-values ([(x y z) ((face-uv->xyz f) u1 v2)])
+     (vector x y z))
+   (let-values ([(x y z) ((face-uv->xyz f) u2 v2)])
+     (vector x y z))
+   (let-values ([(x y z) ((face-uv->xyz f) u2 v1)])
+     (vector x y z))))
 
 ;; Pack the geoid components into a single 64 bit integer.
 (: pack (-> Integer Integer Integer Integer
@@ -388,10 +423,20 @@
   (define-values (face ix iy _level) (encode x y z level))
   (pack face ix iy level))
 
+;; Return the unit vector which is in the center of GEOID
 (: geoid->unit-vector (-> Integer (Values Real Real Real)))
 (define (geoid->unit-vector geoid)
   (define-values (face ix iy level) (unpack geoid))
   (decode face ix iy level))
+
+;; Return the four unit vectors representing the corners of this GEOID.
+(: geoid->corners (-> Integer (List (Vector Real Real Real)
+                                    (Vector Real Real Real)
+                                    (Vector Real Real Real)
+                                    (Vector Real Real Real))))
+(define (geoid->corners geoid)
+  (define-values (face ix iy level) (unpack geoid))
+  (decode-corners face ix iy level))
 
 
 ;;.................................................................. API ....
