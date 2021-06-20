@@ -573,6 +573,23 @@
           (min the-sentinel-geoid
                (+ 2 base (sub1 (arithmetic-shift 1 (add1 (* 2 level))))))))
 
+(: leaf-span* (-> (Listof Integer) (Listof (Pairof Integer Integer))))
+(define (leaf-span* geoids)
+  (if (null? geoids)
+      null
+      (let ([sorted (sort geoids <)])
+        (define-values (start end) (leaf-span (first sorted)))
+        (let loop ([leaf-spans : (Listof (Pairof Integer Integer)) null]
+                   [start start]
+                   [end end]
+                   [sorted (rest sorted)])
+          (if (null? sorted)
+              (reverse (cons (cons start end) leaf-spans))
+              (let-values ([(gstart gend) (leaf-span (first sorted))])
+                (if (< end gstart)
+                    (loop (cons (cons start end) leaf-spans) gstart gend (rest sorted))
+                    (loop leaf-spans start gend (rest sorted)))))))))
+
 (: contains-geoid? (-> Integer Integer Boolean))
 (define (contains-geoid? this-geoid other-geoid)
   (unless (valid-geoid? this-geoid)
@@ -883,3 +900,13 @@
   ;; NOTE: small errors in the unit vector might bring the value below or
   ;; above 1, making `acos` return a complex number.
   (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ)))))
+
+(: distance-from-geoid (-> Integer (-> Integer Real)))
+(define (distance-from-geoid g1)
+  (define-values (x1 y1 z1) (geoid->unit-vector g1))
+  (lambda ([g2 : Integer])
+    (define-values (x2 y2 z2) (geoid->unit-vector g2))
+    (define cos-Θ (+ (* x1 x2) (* y1 y2) (* z1 z2)))
+    ;; NOTE: small errors in the unit vector might bring the value below or
+    ;; above 1, making `acos` return a complex number.
+    (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ))))))

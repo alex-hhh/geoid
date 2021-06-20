@@ -1,10 +1,13 @@
 #!/bin/bash
 
-# Script for installing Racket for Travis use, originally by Greg Hendershott
-# from https://github.com/greghendershott/travis-racket, adapted by Alex
-# Harsanyi.
+# Script for installing Racket for CI use, originally by Greg Hendershott from
+# https://github.com/greghendershott/travis-racket, adapted by Alex Harsanyi.
 
-set -e
+# http://redsymbol.net/articles/unofficial-bash-strict-mode
+set -euo pipefail
+# We rely on IFS containing a space!
+# IFS=$'\n\t'
+
 SCRIPT_NAME=${0##**/}
 
 # These variables can be set in the .travis.yml file, but we provide suitable
@@ -45,12 +48,19 @@ case "$RACKET_VERSION" in
     6.[0-4] | 6.[0-4].[0-9])
         URL="${BASE}/${V}/racket-${M}${V}-x86_64-linux-ubuntu-precise.sh"
         ;;
-    7.*-cs)
+    7.*-cs | 8.*-cs)
         # NOTE: 7.4 is the first version which has a Chez variant
+        V=`echo $V | sed s/-cs//`
         URL="${BASE}/${V}/racket-${M}${V}-x86_64-linux-cs.sh"
         ;;
-    6.* | 7.*)
+    6.* | 7.* | 7.*-bc)
+        V=`echo $V | sed s/-bc//`
         URL="${BASE}/${V}/racket-${M}${V}-x86_64-linux.sh"
+        ;;
+    8.* | 8.*-bc)
+        # NOTE: 8.0 started using the BC suffix for the "classic" versions.
+        V=`echo $V | sed s/-bc//`
+        URL="${BASE}/${V}/racket-${M}${V}-x86_64-linux-bc.sh"
         ;;
     *)
         echo "$SCRIPT_NAME: unsupported Racket version ${RACKET_VERSION}"

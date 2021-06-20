@@ -234,6 +234,20 @@ the same API and functionality as that library.
 
 }
 
+@defproc[(leaf-span* [geoids (list-of exact-integer?)]) (list-of (cons/c exact-integer? exact-integer?))]{
+
+  Return a list of half open geoid ranges which define the valid geoids
+  contained in all the geoids from @racket[geoids] list.  This is equivalent
+  to calling @racket[leaf-span] for each individual geoid in @racket[geoids]
+  and merging all the adjacent ranges together.
+
+  This function can be used to create more efficient queries if a geoid is
+  inside a list of geoids.  A common use case is to use
+  @racket[adjacent-geoids] to obtain the neighbours of a geoid and using
+  @racket[leaf-span*] to find the ranges for all geoids in this neighbourhood.
+
+  }
+
 @defproc[(contains-geoid? [this-geoid exact-integer?] [other-geoid exact-integer?]) boolean?]{
 
   Return true if the @racket[other-geoid] is geographically inside
@@ -256,7 +270,7 @@ the same API and functionality as that library.
 }
 
 @defproc[(adjacent-geoids [geoid exact-integer?])
-         (list-of integer?)]{
+         (list-of exact-integer?)]{
 
   Return the adjacent geoids which border @racket[geoid].  The returned geoids
   will be at the same level as @racket[geoids].
