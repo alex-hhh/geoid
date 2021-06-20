@@ -1,5 +1,3 @@
-#lang racket/base
-
 ;; waypoint-alignment.rkt -- determine how close are two GPS paths.
 ;;
 ;; This file is part of geoid -- work efficiently with geographic data
@@ -18,7 +16,7 @@
 ;; You should have received a copy of the GNU Lesser General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-#lang typed/racket
+#lang typed/racket/base
 (require "geoid.rkt"
          racket/flonum)
 
