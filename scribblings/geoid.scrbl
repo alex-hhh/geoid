@@ -1,5 +1,6 @@
 #lang scribble/manual
 @require[@for-label[geoid
+                    geoid/waypoint-alignment
                     racket/contract/base
                     racket/base]]
 
@@ -234,6 +235,20 @@ the same API and functionality as that library.
 
 }
 
+@defproc[(leaf-span* [geoids (list-of exact-integer?)]) (list-of (cons/c exact-integer? exact-integer?))]{
+
+  Return a list of half open geoid ranges which define the valid geoids
+  contained in all the geoids from @racket[geoids] list.  This is equivalent
+  to calling @racket[leaf-span] for each individual geoid in @racket[geoids]
+  and merging all the adjacent ranges together.
+
+  This function can be used to create more efficient queries if a geoid is
+  inside a list of geoids.  A common use case is to use
+  @racket[adjacent-geoids] to obtain the neighbours of a geoid and using
+  @racket[leaf-span*] to find the ranges for all geoids in this neighbourhood.
+
+  }
+
 @defproc[(contains-geoid? [this-geoid exact-integer?] [other-geoid exact-integer?]) boolean?]{
 
   Return true if the @racket[other-geoid] is geographically inside
@@ -256,7 +271,7 @@ the same API and functionality as that library.
 }
 
 @defproc[(adjacent-geoids [geoid exact-integer?])
-         (list-of integer?)]{
+         (list-of exact-integer?)]{
 
   Return the adjacent geoids which border @racket[geoid].  The returned geoids
   will be at the same level as @racket[geoids].
@@ -265,7 +280,6 @@ the same API and functionality as that library.
   is in a corner of a face and only 4 geoids if it is a face level geoid.
 
 }
-
 
 @defproc*[([(approximate-area-for-geoid [geoid exact-integer?]) real?]
            [(approximate-area-for-level [level (between/c 0 30)]) real?])]{
@@ -289,4 +303,35 @@ the same API and functionality as that library.
 
 }
 
+@defproc[(distance-from-geoid [g exact-integer?]) (-> exact-integer? real?)]{
 
+  Return a function which can be used to calculate the distance on the Earth
+  surface between the geoid @racket[g] and another geoid.  The returned
+  function will accept a single geoid as an argument and will return the
+  distance between that geoid and @racket[g].
+
+  If you need to calculate the distance between a single geoid and several
+  others, it might be faster to use this function to construct a "distance
+  function".
+
+}
+
+@section{Waypoint Alignment}
+
+@defproc[(waypoint-alignment-cost [path1 (vectorof exact-integer?)] [path2 (vectorof exact-integer?)]) real?]{
+
+  Return a number representing how similar @racket[path1] is to
+  @racket[path2].  The smaller the number the more similar the two paths are.
+  Ideally, the cost of a path against itself should be zero, but, due to
+  floating point errors, this is a small positive number.
+
+  This function returns the
+  @hyperlink["https://en.wikipedia.org/wiki/Dynamic_time_warping"]{Dynamic
+  Time Warping} cost of the two paths.
+
+  @bold{NOTE}: the alignment cost will depend not only on how close the two
+  paths are to each other, but also on the length of the paths, so it is up to
+  you to decide how to interpret the resulting cost and determine if the two
+  paths are the same or not.
+
+}

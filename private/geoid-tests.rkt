@@ -19,7 +19,8 @@
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-(require rackunit "geoid.rkt" math/statistics math/flonum)
+(require rackunit "geoid.rkt" "waypoint-alignment.rkt"
+         math/statistics math/flonum racket/runtime-path)
 
 (define earth-radius (->fl 6371000))    ; meters
 
@@ -441,6 +442,30 @@
 
        ))
 
+   (test-case "leaf-span*"
+     (check-pred null? (leaf-span* '())) ; degenerate case
+
+     (define id (random-geoid (add1 (random 29))))
+     (define stride (geoid-stride id))
+     (define id1 (+ id stride))
+     (define id2 (+ id1 stride))
+
+     (define span1 (leaf-span* (list id id2 id1))) ; NOTE: not in order!
+     (check-equal? (length span1) 1)
+     (match-define (cons s e) (car span1))
+     (check-equal? s (let-values ([(b e) (leaf-span id)]) b))
+     (check-equal? e (let-values ([(b e) (leaf-span id2)]) e))
+
+     (define span2 (leaf-span* (list id2 id)))
+     (check-equal? (length span2) 2)
+     (match-define (list (cons s1 e1) (cons s2 e2)) span2)
+     (let-values (([b e] (leaf-span id)))
+       (check-equal? s1 b)
+       (check-equal? e1 e))
+     (let-values (([b e] (leaf-span id2)))
+       (check-equal? s2 b)
+       (check-equal? e2 e)))
+
    ))
 
 (define (median x1 y1 z1 x2 y2 z2)
@@ -547,6 +572,87 @@
 
    ))
 
+;; Dams Challenge, Final Climb (Crossing Brookton Highway)
+;;
+;; s1 -- GPX track from Strava
+;; t1 -- Recorded track
+;;
+(define-runtime-path file-wa-s1 "./test-data/s1.rktd")
+(define-runtime-path file-wa-t1 "./test-data/t1.rktd")
+
+;; Mundaring Weir Climb-out
+;;
+;; s2 -- GPX track from Strava (Kalamunda 100)
+;; t2 -- Recorded track (Kalamunda 100, 2021)
+;;
+(define-runtime-path file-wa-s2 "./test-data/s2.rktd")
+(define-runtime-path file-wa-t2 "./test-data/t2.rktd")
+
+;; Lake Gwelup Small Hill
+;;
+;;
+;; s3 -- Extracted GPX route (first lap)
+;; t3 -- Recorded track (second lap)
+;;
+(define-runtime-path file-wa-s3 "./test-data/s3.rktd")
+(define-runtime-path file-wa-t3 "./test-data/t3.rktd")
+
+;; Herdsman Loop partial east
+;;
+;;
+;; s4 -- Extracted GPX route (first lap)
+;; t4-a -- Recorded track, correct
+;; t4-b -- Recorded track, goes on the west side
+;;
+(define-runtime-path file-wa-s4 "./test-data/s4.rktd")
+(define-runtime-path file-wa-t4a "./test-data/t4-a.rktd")
+(define-runtime-path file-wa-t4b "./test-data/t4-b.rktd")
+
+(define data-s1 (call-with-input-file file-wa-s1 read))
+(define data-t1 (call-with-input-file file-wa-t1 read))
+(define data-s2 (call-with-input-file file-wa-s2 read))
+(define data-t2 (call-with-input-file file-wa-t2 read))
+(define data-s3 (call-with-input-file file-wa-s3 read))
+(define data-t3 (call-with-input-file file-wa-t3 read))
+(define data-s4 (call-with-input-file file-wa-s4 read))
+(define data-t4a (call-with-input-file file-wa-t4a read))
+(define data-t4b (call-with-input-file file-wa-t4b read))
+
+(define waypoint-alignment-test-suite
+  (test-suite
+   "waypoint-alignment"
+   (test-case "dtw self-cost"
+     (for ([data (in-list (list data-s1 data-t1 data-s2 data-t2
+                                data-s3 data-t3 data-s4 data-t4a data-t4b))])
+       (define cost (dtw data data))
+       ;; NOTE: the cost of a path alignment against itself should be 0, but
+       ;; we have some errors in calculating distances, this error seems to be
+       ;; just under 4cm for each waypoint
+       (check-= (/ cost (vector-length data)) 0 0.04)))
+   (test-case "dtw/memory-efficient self-cost"
+     (for ([data (in-list (list data-s1 data-t1 data-s2 data-t2
+                                data-s3 data-t3 data-s4 data-t4a data-t4b))])
+       (define cost (dtw data data))
+       ;; NOTE: the cost of a path alignment against itself should be 0, but
+       ;; we have some errors in calculating distances, this error seems to be
+       ;; just under 4cm for each waypoint
+       (check-= (/ cost (vector-length data)) 0 0.04)))
+
+   (test-case "dtw + dtw/memory-efficient equivalence"
+     (define (check-cost s t name)
+       (define cost-1 (dtw s t))
+       (define cost-2 (dtw/memory-efficient s t))
+       ;; NOTE: they should be identical!
+       (check-= cost-1 cost-2 1e-5 name))
+
+     (check-cost data-s1 data-t1 "s1/t1")
+     (check-cost data-s2 data-t2 "s2/t2")
+     (check-cost data-s3 data-t3 "s3/t3")
+     (check-cost data-s4 data-t4a "s4/t4a")
+     (check-cost data-s4 data-t4b "s4/t4b"))
+
+   ))
+
 (module+ test
   (require al2-test-runner)
   (parameterize ([current-pseudo-random-generator (make-pseudo-random-generator)])
@@ -554,9 +660,10 @@
     (run-tests #:package "geoid"
                #:results-file "test-results-geoid.xml"
                ;; #:exclude '(("adjacent-geoids"))
-               ;; #:only '(("adjacent-geoids"))
+               ;; #:only '(("waypoint-alignment" "dtw + dtw/memory-efficient equivalence"))
                hilbert-distance-test-suite
                pack-unpack-testsuite
                faces-test-suite
                geoid-manipulation-test-suite
-               adjacent-test-suite)))
+               adjacent-test-suite
+               waypoint-alignment-test-suite)))

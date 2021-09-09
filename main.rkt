@@ -31,6 +31,7 @@
  split-geoid                            ; tested, doc
  leaf-geoid?                            ; tested, doc
  leaf-span                              ; tested, doc
+ leaf-span*                             ; tested, doc
  contains-geoid?                        ; tested, doc
  leaf-corners                           ; doc
 
@@ -56,6 +57,7 @@
  lat-lng-rect                           ; doc
 
  distance-between-geoids                ; doc
+ distance-from-geoid                    ; TODO: doc
  )
 
 
