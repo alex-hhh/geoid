@@ -872,8 +872,9 @@
 
 ;;..................................................... Approximate Area ....
 
+;; Radius from https://en.wikipedia.org/wiki/Reference_ellipsoid
 (: earth-radius Real)
-(define earth-radius 6.3781e06)
+(define earth-radius 6371088.0)
 
 (: earth-surface-area Real)
 (define earth-surface-area (* 4 pi earth-radius earth-radius))

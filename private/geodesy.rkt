@@ -327,8 +327,9 @@
 ;; Implementation based on routines from:
 ;; https://movable-type.co.uk/scripts/latlong.html
 
+;; Radius from https://en.wikipedia.org/wiki/Reference_ellipsoid
 (: earth-radius Real)
-(define earth-radius 6371000.0)
+(define earth-radius 6371088.0)
 
 (: spherical-distance (-> Real Real Real Real Real))
 (define (spherical-distance λ1 φ1 λ2 φ2)

@@ -24,8 +24,6 @@
          math/statistics math/flonum racket/runtime-path
          math/distributions)
 
-(define earth-radius (->fl 6371000))    ; meters
-
 (define (haversin Θ)
   (fl/ (fl- 1.0 (flcos Θ)) 2.0))
 
