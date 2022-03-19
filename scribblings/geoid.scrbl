@@ -1,6 +1,7 @@
 #lang scribble/manual
 @require[@for-label[geoid
                     geoid/waypoint-alignment
+                    geoid/geodesy
                     racket/contract/base
                     racket/base]]
 
@@ -317,13 +318,16 @@ the same API and functionality as that library.
 }
 
 @section{Waypoint Alignment}
+@defmodule[geoid/waypoint-alignment]
 
 @defproc[(waypoint-alignment-cost [path1 (vectorof exact-integer?)] [path2 (vectorof exact-integer?)]) real?]{
 
   Return a number representing how similar @racket[path1] is to
-  @racket[path2].  The smaller the number the more similar the two paths are.
-  Ideally, the cost of a path against itself should be zero, but, due to
-  floating point errors, this is a small positive number.
+  @racket[path2].  Both paths are vector of integers representing geoids.
+
+  A smaller cost indicates that the two paths are more similar.  Ideally, the
+  cost of a path against itself should be zero, but, due to floating point
+  errors, this is a small positive number.
 
   This function returns the
   @hyperlink["https://en.wikipedia.org/wiki/Dynamic_time_warping"]{Dynamic
@@ -331,7 +335,135 @@ the same API and functionality as that library.
 
   @bold{NOTE}: the alignment cost will depend not only on how close the two
   paths are to each other, but also on the length of the paths, so it is up to
-  you to decide how to interpret the resulting cost and determine if the two
-  paths are the same or not.
+  the caller of the funtion to decide how to interpret the resulting cost and
+  determine if the two paths are the same or not.
+
+}
+
+@section{Geodesy Calculations}
+@defmodule[geoid/geodesy]
+
+The @racket[geoid/geodesy] module contains functions to calculate distances
+and bearings between points on the Earth surface.  Two calculation modes are
+provided: one that approximates Earth as an ellipsoid, by default
+@racket[wgs84], which is the model used by the GPS satelites, and another
+which approximates the Earth as a sphere.
+
+@defproc[(ellipsoid? [e any/c]) boolean?]{
+
+  Return @racket[#t] if @racket[e] is an ellipsoid created by
+  @racket[make-ellipsoid].
+
+}
+
+@defproc[(make-ellipsoid [major real?] [minor real?]) ellipsoid?]{
+
+  Create an ellipsoid with the @racket[major] and @racket[minor] semi-axes.
+  Ellipsoids can be used as values for @racket[geodesy-ellipsoid] or to
+  individual functions in this module.  The @racket[wgs84] ellipsoid, used by
+  the GPS satelites, is already defined in this module and it is the default.
+
+}
+
+@defthing[wgs84 ellipsoid?]{
+
+  The @hyperlink["https://en.wikipedia.org/wiki/World_Geodetic_System"]{WGS84}
+  ellipsoid.
+
+}
+
+@defparam[geodesy-angle-mode mode (or/c 'degrees 'radians) #:value 'degrees]{
+
+  A parameter that specifies the type of angles which are passed to the
+  functions in this module as well as the type of angle which are returned for
+  bearings.  Valid values are @racket['degees], which means that latitude,
+  longitudes are in degrees or @racket['radians].
+
+}
+
+@defparam[geodesy-ellipsoid ellipsoid (or/c #f ellipsoid?) #:value wgs84]{
+
+  A parameter that specifies the ellipsoid to use for the calculations by the
+  functions in this module.  By default, the @racket[wgs84] ellipsoid is used
+  and a value of @racket[#f] means that the calculations are done assuming a
+  sperical Earth model.
+
+}
+
+@defproc[(distance-between [lat1 real?] [lon1 real?]
+                           [lat2 real?] [lon2 real?]
+                           [#:angle-mode m (or/c 'degrees 'radians) (geodesy-angle-mode)]
+                           [#:ellipsoid e (or/c #f ellipsoid?) (geodesy-ellipsoid)])
+         real?]{
+
+  Return the distance between two points on Earth along the great circle,
+  which is the shortest distance.  The points are identified by latitude and
+  longitude, which are angles.
+
+  @racket[m] specifies if the latitude and longitude angles are specified in
+  degrees or radians, while @racket[e] specifies the ellipsoid to use for the
+  calculation. If @racket[e] is @racket[#f], the calculation is done assuming
+  Earth is a sphere.
+
+}
+
+@defproc[(initial-bearing [lat1 real?] [lon1 real?]
+                          [lat2 real?] [lon2 real?]
+                          [#:angle-mode m (or/c 'degrees 'radians) (geodesy-angle-mode)]
+                          [#:ellipsoid e (or/c #f ellipsoid?) (geodesy-ellipsoid)])
+         real?]{
+
+  Return the initial bearing for traveling between two points on Earth along
+  the great circle.  The points are identified by latitude and longitude,
+  which are angles and the bearning is also an angle, where @racket[0] is the
+  North direction and the angle moves clockwise.
+
+  Note that, when traveling along a great circle the bearing will not remain
+  constant.
+
+  The @racket[m] and @racket[e] parameters are the same as for
+  @racket[distance-between].
+
+}
+
+@defproc[(final-bearing [lat1 real?] [lon1 real?]
+                        [lat2 real?] [lon2 real?]
+                        [#:angle-mode m (or/c 'degrees 'radians) (geodesy-angle-mode)]
+                        [#:ellipsoid e (or/c #f ellipsoid?) (geodesy-ellipsoid)])
+         real?]{
+
+  Similar to @racket[initial-bearing], but return the final bearing for
+  traveling between two points on Earth along the great circle.
+
+}
+
+@defproc[(destination-point [lat real?] [lon real?]
+                            [bearing real?] [distance real?]
+                            [#:angle-mode m (or/c 'degrees 'radians) (geodesy-angle-mode)]
+                            [#:ellipsoid e (or/c #f ellipsoid?) (geodesy-ellipsoid)])
+         (values real? real?)]{
+
+  Return the destination point for traveling from the point @racket[lat],
+  @racket[lon] along a great circle with an initial @racket[bearing] for a
+  given @racket[distance].
+
+  The @racket[m] and @racket[e] parameters are the same as for
+  @racket[distance-between].
+
+}
+
+@defproc[(midway-point [lat1 real?] [lon1 real?]
+                       [lat2 real?] [lon2 real?]
+                       [#:angle-mode m (or/c 'degrees 'radians) (geodesy-angle-mode)]
+                       [#:ellipsoid e (or/c #f ellipsoid?) (geodesy-ellipsoid)])
+         (values real? real?)]{
+
+  Return the latitude/longitude point that it half-way between the points
+  @racket[lat1], @racket[lon1] and @racket[lat2], @racket[lon2], along the
+  great circle arc, that is along the shorted distance path between the two
+  points.
+
+  The @racket[m] and @racket[e] parameters are the same as for
+  @racket[distance-between].
 
 }

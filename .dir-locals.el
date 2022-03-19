@@ -3,6 +3,7 @@
          (show-trailing-whitespace . t)
          (ah-project-headline . "geoid -- work efficiently with geographic data")
          (ah-project-license . lgpl)
+         (ah-spdx-license . "LGPL-3.0-or-later")
          (bug-reference-url-format . "https://github.com/alex-hhh/geoid/issues/%s")
          (bug-reference-bug-regexp . "\\#\\(?2:[0-9]+\\)\\>")
          ))

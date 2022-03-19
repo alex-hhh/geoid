@@ -20,7 +20,9 @@
 
 
 (require rackunit "geoid.rkt" "waypoint-alignment.rkt"
-         math/statistics math/flonum racket/runtime-path)
+         (except-in "geodesy.rkt" earth-radius)
+         math/statistics math/flonum racket/runtime-path
+         math/distributions)
 
 (define earth-radius (->fl 6371000))    ; meters
 
@@ -653,6 +655,109 @@
 
    ))
 
+(define (test-data-points/vincenty lat1 lon1 lat2 lon2)
+  (define-values (distance-1 initial-bearing-1 final-bearing-1)
+    (vincenty-inverse lon1 lat1 lon2 lat2))
+  (define-values (distance-2 initial-bearing-2 final-bearing-2)
+    (vincenty-inverse lon2 lat2 lon1 lat1))
+
+  (define-values (dlon2 dlat2 fb2)
+    (vincenty-direct lon1 lat1 initial-bearing-1 distance-1))
+  (define-values (dlon1 dlat1 fb1)
+    (vincenty-direct lon2 lat2 initial-bearing-2 distance-2))
+
+  (check-= distance-1 distance-2 1e-6)
+  (check-= initial-bearing-1 (wrap2π (+ final-bearing-2 pi)) 1e-6)
+  (check-= final-bearing-1 (wrap2π (+ initial-bearing-2 pi)) 1e-6)
+  (check-= lat1 dlat1 1e-6)
+  (check-= lon1 dlon1 1e-6)
+  (check-= lat2 dlat2 1e-6)
+  (check-= lon2 dlon2 1e-6))
+
+(define (test-distance-and-bearing/spherical lat1 lon1 lat2 lon2)
+  (define distance-1 (spherical-distance lon1 lat1 lon2 lat2))
+  (define distance-2 (spherical-distance lon2 lat2 lon1 lat1))
+
+  (check-= distance-1 distance-2 1e-6)
+
+  (define initial-bearing-1 (spherical-bearing lon1 lat1 lon2 lat2))
+  (define-values (lon3 lat3)
+    (spherical-destination lon1 lat1 initial-bearing-1 distance-1))
+  (check-= lat2 lat3 1e-6)
+  (check-= lon2 lon3 1e-6)
+
+  (define initial-bearing-2 (spherical-bearing lon2 lat2 lon1 lat1))
+  (define-values (lon4 lat4)
+    (spherical-destination lon2 lat2 initial-bearing-2 distance-2))
+  (check-= lat1 lat4 1e-6)
+  (check-= lon1 lon4 1e-6))
+
+(define (test-midway-point/spherical lat1 lon1 lat2 lon2)
+  (define-values (lonm1 latm1) (spherical-midway-point lon1 lat1 lon2 lat2))
+  (define-values (lonm2 latm2) (spherical-midway-point lon2 lat2 lon1 lat1))
+
+  (check-= lonm1 lonm2 1e-6)
+  (check-= latm1 latm2 1e-6)
+
+  (define first-half (spherical-distance lon1 lat1 lonm1 latm1))
+  (define second-half (spherical-distance lonm1 latm1 lon2 lat2))
+  (define full (spherical-distance lon1 lat1 lon2 lat2))
+
+  (check-= first-half second-half 1e-6)
+  (check-= (+ first-half second-half) full 1e-6))
+
+(define (test-intermediate-point/spherical lat1 lon1 lat2 lon2)
+  (define-values (lon-start lat-start)
+    (spherical-intermediate-point lon1 lat1 lon2 lat2 0))
+
+  (check-= lon-start lon1 1e-6)
+  (check-= lat-start lat1 1e-6)
+
+  (define-values (lon-end lat-end)
+    (spherical-intermediate-point lon1 lat1 lon2 lat2 1))
+
+  (check-= lon-end lon2 1e-6)
+  (check-= lat-end lat2 1e-6)
+
+  (define-values (lon-mid lat-mid)
+    (spherical-intermediate-point lon1 lat1 lon2 lat2 1/2))
+  (define-values (lonm latm) (spherical-midway-point lon1 lat1 lon2 lat2))
+
+  (check-= lon-mid lonm 1e-6)
+  (check-= lat-mid latm 1e-6))
+
+
+(define geodesy-test-suite
+  (test-suite
+    "Geodesy test suite"
+    (test-case "vincenty direct - inverse consistency"
+
+      (define iterations 5000)
+      (define lat-distribution (uniform-dist (- (/ pi 2)) (/ pi 2)))
+      (define lon-distribution (uniform-dist (- pi) pi))
+
+      (for ([lat1 (sample lat-distribution iterations)]
+            [lon1 (sample lon-distribution iterations)]
+            [lat2 (sample lat-distribution iterations)]
+            [lon2 (sample lon-distribution iterations)])
+        (test-data-points/vincenty lat1 lon1 lat2 lon2)))
+
+    (test-case "spherical direct - inverse consistency"
+      (define iterations 5000)
+      (define lat-distribution (uniform-dist (- (/ pi 2)) (/ pi 2)))
+      (define lon-distribution (uniform-dist (- pi) pi))
+
+      (for ([lat1 (sample lat-distribution iterations)]
+            [lon1 (sample lon-distribution iterations)]
+            [lat2 (sample lat-distribution iterations)]
+            [lon2 (sample lon-distribution iterations)])
+        (test-distance-and-bearing/spherical lat1 lon1 lat2 lon2)
+        (test-midway-point/spherical lat1 lon1 lat2 lon2)
+        (test-intermediate-point/spherical lat1 lon1 lat2 lon2)))
+
+  ))
+
+
 (module+ test
   (require al2-test-runner)
   (parameterize ([current-pseudo-random-generator (make-pseudo-random-generator)])
@@ -666,4 +771,5 @@
                faces-test-suite
                geoid-manipulation-test-suite
                adjacent-test-suite
-               waypoint-alignment-test-suite)))
+               waypoint-alignment-test-suite
+               geodesy-test-suite)))
