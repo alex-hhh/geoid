@@ -29,9 +29,9 @@
         [index (in-naturals)])
     (define base (* index 3))
     (define-values (x y z) (geoid->unit-vector g))
-    (flvector-set! u base (cast x Flonum))
-    (flvector-set! u (+ base 1) (cast y Flonum))
-    (flvector-set! u (+ base 2) (cast z Flonum)))
+    (flvector-set! u base x)
+    (flvector-set! u (+ base 1) y)
+    (flvector-set! u (+ base 2) z))
   u)
 
 ;; Return the cost of the optimal mapping between two paths of waypoints

@@ -1,4 +1,4 @@
-#lang typed/racket
+#lang typed/racket/base
 
 ;; This file is part of geoid -- work efficiently with geographic data
 ;; Copyright (c) 2020 Alex Harsányi <AlexHarsanyi@gmail.com>
@@ -16,6 +16,10 @@
 ;; You should have received a copy of the GNU Lesser General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+
+(require racket/match
+         racket/math
+         racket/flonum)
 (provide (all-defined-out))
 
 
@@ -96,12 +100,12 @@
 ;; A geometric plane defined by 4 real numbers, see
 ;; https://en.wikipedia.org/wiki/Plane_(geometry)
 
-(struct plane ([a : Real] [b : Real] [c : Real] [d : Real]) #:transparent)
+(struct plane ([a : Flonum] [b : Flonum] [c : Flonum] [d : Flonum]) #:transparent)
 
 ;; Construct a plane from an origin point (ox, oy, oz) and a normal vector
 ;; (nx, ny, nz).  The normal vector is assumed (but not checked) to be of unit
 ;; length.
-(: make-plane (-> Real Real Real Real Real Real plane))
+(: make-plane (-> Flonum Flonum Flonum Flonum Flonum Flonum plane))
 (define (make-plane ox oy oz nx ny nz)
   (plane nx ny nz (- (+ (* ox nx) (* oy ny) (* oz nz)))))
 
@@ -109,7 +113,7 @@
 ;; the vector is assumed to be of unit length.  Returns +inf.0 if the vector
 ;; is parallel to the plane.  Can return a negative value if the plane is in
 ;; the opposite direction from where the vector is pointing.
-(: distance-to-plane (-> Real Real Real plane Real))
+(: distance-to-plane (-> Flonum Flonum Flonum plane Flonum))
 (define (distance-to-plane x y z p)
   (match-define (plane a b c d) p)
   (define div (+ (* x a) (* y b) (* z c)))
@@ -122,18 +126,20 @@
 ;; functions to compute the distance to the plane and to project / un-project
 ;; values to the plane.
 (struct face ([id : Integer]
-              [xyzd->uv : (-> Real Real Real Real (Values Real Real))]
-              [uv->xyz : (-> Real Real (Values Real Real Real))]
-              [distance : (-> Real Real Real Real)])
+              [xyzd->uv : (-> Flonum Flonum Flonum Flonum (Values Flonum Flonum))]
+              [uv->xyz : (-> Flonum Flonum (Values Flonum Flonum Flonum))]
+              [uv->xyz/raw : (-> Flonum Flonum (Values Flonum Flonum Flonum))]
+              [distance : (-> Flonum Flonum Flonum Flonum)])
   #:transparent)
 
 (: make-face (-> Integer
-                 (-> Real Real Real Real (Values Real Real))
-                 (-> Real Real (Values Real Real Real))
-                 (-> Real Real Real Real)
+                 (-> Flonum Flonum Flonum Flonum (Values Flonum Flonum))
+                 (-> Flonum Flonum (Values Flonum Flonum Flonum))
+                 (-> Flonum Flonum (Values Flonum Flonum Flonum))
+                 (-> Flonum Flonum Flonum Flonum)
                  face))
-(define (make-face id xyzd->uv uv->xyz distance)
-  (face id xyzd->uv uv->xyz distance))
+(define (make-face id xyzd->uv uv->xyz uv->xyz/raw distance)
+  (face id xyzd->uv uv->xyz uv->xyz/raw distance))
 
 ;; NOTE: plane faces are numbered such that they are adjacent to each other
 ;; and the hilbert points continue from one face to the next: Front -> Right
@@ -145,78 +151,103 @@
   (make-face
    0
    (lambda (x y z d)
-     (values (* 1/2 (+ 1 (* y d))) (* 1/2 (+ 1 (* z d)))))
+     (values (* 0.5 (+ 1.0 (* y d))) (* 0.5 (+ 1.0 (* z d)))))
    (lambda (u v)
-     (define y (- (* 2 u) 1))
-     (define z (- (* 2 v) 1))
-     (define len (cast (sqrt (+ 1 (* y y) (* z z))) Real))
-     (values (/ 1 len) (/ y len) (/ z len)))
-   (let ([p (make-plane 1 0 0 1 0 0)])
+     (define y (- (* 2.0 u) 1.0))
+     (define z (- (* 2.0 v) 1.0))
+     (define len (flsqrt (+ 1.0 (* y y) (* z z))))
+     (values (/ 1.0 len) (/ y len) (/ z len)))
+   (lambda (u v)
+     (define y (- (* 2.0 u) 1.0))
+     (define z (- (* 2.0 v) 1.0))
+     (values 1.0 y z))
+   (let ([p (make-plane 1.0 0.0 0.0 1.0 0.0 0.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
 
 (define right-face
   (make-face
    1
    (lambda (x y z d)
-     (values (* 1/2 (+ 1 (* z d))) (* 1/2 (- 1 (* x d)))))
+     (values (* 0.5 (+ 1.0 (* z d))) (* 0.5 (- 1.0 (* x d)))))
    (lambda (u v)
-     (define z (- (* 2 u) 1))
-     (define x (- 1 (* 2 v)))
-     (define len (cast (sqrt (+ 1 (* x x) (* z z))) Real))
-     (values (/ x len) (/ 1 len) (/ z len)))
-   (let ([p (make-plane 0 1 0 0 1 0)])
+     (define z (- (* 2.0 u) 1.0))
+     (define x (- 1.0 (* 2.0 v)))
+     (define len (flsqrt (+ 1.0 (* x x) (* z z))))
+     (values (/ x len) (/ 1.0 len) (/ z len)))
+   (lambda (u v)
+     (define z (- (* 2.0 u) 1.0))
+     (define x (- 1.0 (* 2.0 v)))
+     (values x 1.0 z))
+   (let ([p (make-plane 0.0 1.0 0.0 0.0 1.0 0.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
 
 (define top-face
   (make-face
    2
    (lambda (x y z d)
-     (values (* 1/2 (- 1 (* x d))) (* 1/2 (- 1 (* y d)))))
+     (values (* 0.5 (- 1.0 (* x d))) (* 0.5 (- 1.0 (* y d)))))
    (lambda (u v)
-     (define x (- 1 (* 2 u)))
-     (define y (- 1 (* 2 v)))
-     (define len (cast (sqrt (+ (* x x) (* y y) 1)) Real))
-     (values (/ x len) (/ y len) (/ 1 len)))
-   (let ([p (make-plane 0 0 1 0 0 1)])
+     (define x (- 1.0 (* 2.0 u)))
+     (define y (- 1.0 (* 2.0 v)))
+     (define len (flsqrt (+ (* x x) (* y y) 1.0)))
+     (values (/ x len) (/ y len) (/ 1.0 len)))
+   (lambda (u v)
+     (define x (- 1.0 (* 2.0 u)))
+     (define y (- 1.0 (* 2.0 v)))
+     (values x y 1.0))
+   (let ([p (make-plane 0.0 0.0 1.0 0.0 0.0 1.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
 
 (define back-face
   (make-face
    3
    (lambda (x y z d)
-     (values (* 1/2 (- 1 (* y d))) (* 1/2 (- 1 (* z d)))))
+     (values (* 0.5 (- 1.0 (* y d))) (* 0.5 (- 1.0 (* z d)))))
    (lambda (u v)
-     (define y (- 1 (* 2 u)))
-     (define z (- 1 (* 2 v)))
-     (define len (cast (sqrt (+ 1 (* y y) (* z z))) Real))
-     (values (/ -1 len) (/ y len) (/ z len)))
-   (let ([p (make-plane -1 0 0 -1 0 0)])
+     (define y (- 1.0 (* 2.0 u)))
+     (define z (- 1.0 (* 2.0 v)))
+     (define len (flsqrt (+ 1.0 (* y y) (* z z))))
+     (values (/ -1.0 len) (/ y len) (/ z len)))
+   (lambda (u v)
+     (define y (- 1.0 (* 2.0 u)))
+     (define z (- 1.0 (* 2.0 v)))
+     (values -1.0 y z))
+   (let ([p (make-plane -1.0 0.0 0.0 -1.0 0.0 0.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
 
 (define left-face
   (make-face
    4
    (lambda (x y z d)
-     (values (* 1/2 (- 1 (* z d))) (* 1/2 (+ 1 (* x d)))))
+     (values (* 0.5 (- 1.0 (* z d))) (* 0.5 (+ 1.0 (* x d)))))
    (lambda (u v)
-     (define z (- 1 (* 2 u)))
-     (define x (- (* 2 v) 1))
-     (define len (cast (sqrt (+ (* x x) 1 (* z z))) Real))
-     (values (/ x len) (/ -1 len) (/ z len)))
-   (let ([p (make-plane 0 -1 0 0 -1 0)])
+     (define z (- 1.0 (* 2.0 u)))
+     (define x (- (* 2.0 v) 1.0))
+     (define len (flsqrt (+ (* x x) 1.0 (* z z))))
+     (values (/ x len) (/ -1.0 len) (/ z len)))
+   (lambda (u v)
+     (define z (- 1.0 (* 2.0 u)))
+     (define x (- (* 2.0 v) 1.0))
+     (define len (flsqrt (+ (* x x) 1.0 (* z z))))
+     (values x -1.0 z))
+   (let ([p (make-plane 0.0 -1.0 0.0 0.0 -1.0 0.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
 
 (define bottom-face
   (make-face
    5
    (lambda (x y z d)
-     (values (* 1/2 (+ 1 (* x d))) (* 1/2 (+ 1 (* y d)))))
+     (values (* 0.5 (+ 1.0 (* x d))) (* 0.5 (+ 1.0 (* y d)))))
    (lambda (u v)
-     (define x (- (* 2 u) 1))
-     (define y (- (* 2 v) 1))
-     (define len (cast (sqrt (+ (* x x) (* y y) 1)) Real))
-     (values (/ x len) (/ y len) (/ -1 len)))
-   (let ([p (make-plane 0 0 -1 0 0 -1)])
+     (define x (- (* 2.0 u) 1.0))
+     (define y (- (* 2.0 v) 1.0))
+     (define len (flsqrt (+ (* x x) (* y y) 1.0)))
+     (values (/ x len) (/ y len) (/ -1.0 len)))
+   (lambda (u v)
+     (define x (- (* 2.0 u) 1.0))
+     (define y (- (* 2.0 v) 1.0))
+     (values x y -1.0))
+   (let ([p (make-plane 0.0 0.0 -1.0 0.0 0.0 -1.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
 
 ;; NOTE: must be in face id order
@@ -224,17 +255,17 @@
 (define all-faces
   (list front-face right-face top-face back-face left-face bottom-face))
 
-(: find-face (-> Real Real Real (values Real face)))
+(: find-face (-> Flonum Flonum Flonum (values Flonum face)))
 (define (find-face x y z)
   (define-values (d p)
-    (for/fold ([d : Real +inf.0]
+    (for/fold ([d : Flonum +inf.0]
                [c : (U #f face) #f])
               ([p (in-list all-faces)])
       (define e ((face-distance p) x y z))
       (if (and (> e 0) (< e d))
           (values e p)
           (values d c))))
-  (values d (cast p face)))
+  (values d (assert p face?)))
 
 
 ;;........................................................... level-info ....
@@ -251,7 +282,7 @@
    [mask : Integer] ; the mask value to clear the bits of the sentinel part
    [sentinel : Integer] ; the sentinel mask, identifying the level
    [max-coord : Integer] ; maximum x,y encoding coordinates at this level
-   [epsilon : Real]) ; half square width at this level, relative to the unit face
+   [epsilon : Flonum]) ; half square width at this level, relative to the unit face
   #:transparent)
 
 (define level-information
@@ -261,13 +292,13 @@
       (define flag-bit (* 2 id))
       (define sentinel (arithmetic-shift 1 flag-bit))
       (define mask
-        (cast (sub1 (arithmetic-shift sentinel 1)) Integer))
+        (assert (sub1 (arithmetic-shift sentinel 1)) integer?))
       (define max-coord
         (arithmetic-shift 1 (- max-level id)))
       (define epsilon
         (if (> max-coord 0)
             (exact->inexact (* 0.5 (/ 1 max-coord)))
-            0))
+            0.0))
       (level-info id mask sentinel max-coord epsilon)))
 
 
@@ -275,10 +306,10 @@
 
 ;; Convert a latitude / longitude pair to a vector of unit length on the
 ;; unit-sphere.
-(: lat-lng->unit-vector (-> Real Real (Values Real Real Real)))
+(: lat-lng->unit-vector (-> Real Real (Values Flonum Flonum Flonum)))
 (define (lat-lng->unit-vector lat lon)
-  (define Θ (degrees->radians (- 90.0 lat)))
-  (define Φ (degrees->radians lon))
+  (define Θ (degrees->radians (- 90.0 (real->double-flonum lat))))
+  (define Φ (degrees->radians (real->double-flonum lon)))
   (define sin-Θ (sin Θ))
   (define cos-Θ (cos Θ))
   (define sin-Φ (sin Φ))
@@ -287,21 +318,18 @@
 
 ;; Convert a unit vector on the unit sphere back into the latitude / longitude
 ;; pair.
-(: unit-vector->lat-lng (-> Real Real Real (Values Real Real)))
+(: unit-vector->lat-lng (-> Flonum Flonum Flonum (Values Flonum Flonum)))
 (define (unit-vector->lat-lng x y z)
-  (define r (sqrt (+ (* x x) (* y y) (* z z))))
+  (define r (flsqrt (+ (* x x) (* y y) (* z z))))
   (define cos-Θ (/ z r))
-  (define Θ (cast (acos cos-Θ) Real))
-  (define sin-Θ (sin Θ))
-  (define cos-Φ (/ x sin-Θ))
-  (define sin-Φ (/ y sin-Θ))
+  (define Θ (flacos cos-Θ))
   (define Φ (atan y x))
   (values (- 90.0 (radians->degrees Θ)) (radians->degrees Φ)))
 
 ;; Encode a unit vector defined by x, y z info the components of a geoid: the
 ;; face, the x, y coordinates on the plane for Hilbert distance computation
 ;; and the level.
-(: encode (-> Real Real Real Integer
+(: encode (-> Flonum Flonum Flonum Integer
               (Values Integer
                       Integer
                       Integer
@@ -318,15 +346,16 @@
   (define iu (max 0 (min m (exact-floor (* u max-coord)))))
   (define iv (max 0 (min m (exact-floor (* v max-coord)))))
   (values (face-id f)
-          (cast iu Integer)
-          (cast iv Integer)
+          (assert iu integer?)
+          (assert iv integer?)
           level))
 
 ;; Decode the unit vector from the components of a geoid: the face, the x, y
 ;; integer coordinates and the level.  Returns three values, the x, y z
-;; coordinates of the unit vector.
+;; coordinates of the unit vector.  The unit vector will point in the middle
+;; of the geoid cell.
 (: decode (-> Integer Integer Integer Integer
-              (Values Real Real Real)))
+              (Values Flonum Flonum Flonum)))
 (define (decode face ix iy level)
   (when (> face 5)
     ; there are only 6 faces, from 0 to 5, but the 3 bits used to encode them
@@ -337,9 +366,9 @@
   (match-define (level-info id ask sentinel max-coord epsilon)
     (vector-ref level-information level))
 
-  (: u Real)
+  (: u Flonum)
   (define u (+ epsilon (exact->inexact (/ ix max-coord))))
-  (: v Real)
+  (: v Flonum)
   (define v (+ epsilon (exact->inexact (/ iy max-coord))))
   (define f (list-ref all-faces face))
   ((face-uv->xyz f) u v))
@@ -378,17 +407,18 @@
         ;; them
         (define-values (ix iy)
           (hilbert-distance->xy
-           (cast (sub1 (- max-level (level-info-id linfo))) Integer)
+           (assert (sub1 (- max-level (level-info-id linfo))) integer?)
            hd))
         (values face ix iy (level-info-id linfo)))
       (error (format "unpack: cannot find level information for ~a" d))))
 
-(: unit-vector->geoid (-> Real Real Real Integer Integer))
+(: unit-vector->geoid (-> Flonum Flonum Flonum Integer Integer))
 (define (unit-vector->geoid x y z level)
   (define-values (face ix iy _level) (encode x y z level))
   (pack face ix iy level))
 
-(: geoid->unit-vector (-> Integer (Values Real Real Real)))
+;; Return the unit vector which is in the center of GEOID
+(: geoid->unit-vector (-> Integer (Values Flonum Flonum Flonum)))
 (define (geoid->unit-vector geoid)
   (define-values (face ix iy level) (unpack geoid))
   (decode face ix iy level))
@@ -502,7 +532,7 @@
   (define-values (x y z) (lat-lng->unit-vector lat lon))
   (unit-vector->geoid x y z 0))
 
-(: geoid->lat-lng (-> Integer (Values Real Real)))
+(: geoid->lat-lng (-> Integer (Values Flonum Flonum)))
 (define (geoid->lat-lng id)
   (unless (valid-geoid? id)
     (raise-argument-error 'geoid "valid-geoid?" id))
@@ -578,17 +608,17 @@
   (if (null? geoids)
       null
       (let ([sorted (sort geoids <)])
-        (define-values (start end) (leaf-span (first sorted)))
+        (define-values (start end) (leaf-span (car sorted)))
         (let loop ([leaf-spans : (Listof (Pairof Integer Integer)) null]
                    [start start]
                    [end end]
-                   [sorted (rest sorted)])
+                   [sorted (cdr sorted)])
           (if (null? sorted)
               (reverse (cons (cons start end) leaf-spans))
-              (let-values ([(gstart gend) (leaf-span (first sorted))])
+              (let-values ([(gstart gend) (leaf-span (car sorted))])
                 (if (< end gstart)
-                    (loop (cons (cons start end) leaf-spans) gstart gend (rest sorted))
-                    (loop leaf-spans start gend (rest sorted)))))))))
+                    (loop (cons (cons start end) leaf-spans) gstart gend (cdr sorted))
+                    (loop leaf-spans start gend (cdr sorted)))))))))
 
 (: contains-geoid? (-> Integer Integer Boolean))
 (define (contains-geoid? this-geoid other-geoid)
@@ -818,7 +848,7 @@
 
 ;;......................................................... lat/lng rect ....
 
-(: lat-lng-rect (-> Integer (Values Real Real Real Real)))
+(: lat-lng-rect (-> Integer (Values Flonum Flonum Flonum Flonum)))
 (define (lat-lng-rect geoid)
   (unless (valid-geoid? geoid)
     (raise-argument-error 'geoid "valid-geoid?" geoid))
@@ -873,19 +903,19 @@
 ;;..................................................... Approximate Area ....
 
 ;; Radius from https://en.wikipedia.org/wiki/Reference_ellipsoid
-(: earth-radius Real)
+(: earth-radius Flonum)
 (define earth-radius 6371088.0)
 
-(: earth-surface-area Real)
-(define earth-surface-area (* 4 pi earth-radius earth-radius))
+(: earth-surface-area Flonum)
+(define earth-surface-area (* 4.0 pi earth-radius earth-radius))
 
-(: approximate-area-for-geoid (-> Integer Real))
+(: approximate-area-for-geoid (-> Integer Flonum))
 (define (approximate-area-for-geoid id)
   (unless (valid-geoid? id)
     (raise-argument-error 'id "valid-geoid?" id))
   (approximate-area-for-level (geoid-level id)))
 
-(: approximate-area-for-level (-> Integer Real))
+(: approximate-area-for-level (-> Integer Flonum))
 (define (approximate-area-for-level level)
   (when (or (< level 0) (> level max-level))
     (raise-argument-error 'level (format "(between/c 0 ~a)" max-level) level))
@@ -893,7 +923,7 @@
   (define max-coord (level-info-max-coord linfo))
   (/ (/ (/ earth-surface-area 6) max-coord) max-coord))
 
-(: distance-between-geoids (-> Integer Integer Real))
+(: distance-between-geoids (-> Integer Integer Flonum))
 (define (distance-between-geoids g1 g2)
   (define-values (x1 y1 z1) (geoid->unit-vector g1))
   (define-values (x2 y2 z2) (geoid->unit-vector g2))
@@ -902,7 +932,7 @@
   ;; above 1, making `acos` return a complex number.
   (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ)))))
 
-(: distance-from-geoid (-> Integer (-> Integer Real)))
+(: distance-from-geoid (-> Integer (-> Integer Flonum)))
 (define (distance-from-geoid g1)
   (define-values (x1 y1 z1) (geoid->unit-vector g1))
   (lambda ([g2 : Integer])

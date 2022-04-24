@@ -68,9 +68,9 @@
 ;; Create an ellipsoid given its semi-major and semi-minor axes.
 (: make-ellipsoid (-> Nonnegative-Flonum Nonnegative-Flonum ellipsoid))
 (define (make-ellipsoid major minor)
-  (ellipsoid major minor 
-    (cast (/ (- major minor) major) Flonum)
-    (cast (/ (- (sqr major) (sqr minor)) (sqr minor)) Flonum)))
+  (ellipsoid major minor
+             (/ (- major minor) major)
+             (/ (- (* major major) (* minor minor)) (* minor minor))))
 
 ;; The "WGS84" ellipsoid, used by the GPS system...
 ;; https://en.wikipedia.org/wiki/World_Geodetic_System
