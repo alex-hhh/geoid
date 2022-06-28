@@ -423,7 +423,7 @@
        (check-true
         (or (equal? end (sentinel-geoid))
             (leaf-geoid? (- end (geoid-stride start)))))
-       (check-pred < start end)
+       (check < start end)
        (define count
          (if (equal? end (sentinel-geoid))
              (/ (+ (- (sub1 end) start) (geoid-stride start)) (geoid-stride start))
