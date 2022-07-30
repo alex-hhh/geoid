@@ -1,7 +1,9 @@
 #lang typed/racket/base
 
 ;; SPDX-License-Identifier: LGPL-3.0-or-later
-;; geodesy.rkt -- calculate distances on the earth ellipsoid
+;;
+;; tiling.rkt -- functions to determine the list of geoids which cover regions
+;; on the Earth surface.
 ;;
 ;; This file is part of geoid -- work efficiently with geographic data
 ;; Copyright (c) 2022 Alex Harsányi <AlexHarsanyi@gmail.com>
@@ -19,20 +21,23 @@
 ;; You should have received a copy of the GNU Lesser General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-(require "private/geodesy.rkt")
+(require "private/tiling.rkt")
 
 (provide
- vincenty-direct                        ; test
- vincenty-inverse                       ; test
+ ;; this is exported so contracts can be written by code using this library,
+ ;; there are no user-invocable operations on the class
+ region%
 
- distance-between
- initial-bearing
- final-bearing
- destination-point
- midway-point
+ make-spherical-cap
+ make-closed-polyline
+ make-open-polyline
 
- ellipsoid?
- make-ellipsoid
- wgs84
- geodesy-ellipsoid
- geodesy-angle-mode)
+ subtract-regions
+ intersect-regions
+ join-regions
+
+ guess-winding-order
+
+ geoid-tiling-for-region
+ refine-geoid-tiling-for-region
+ coarse-geoid-tiling-for-region)

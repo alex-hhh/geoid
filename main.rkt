@@ -1,4 +1,4 @@
-#lang racket/base
+#lang typed/racket/base
 ;; This file is part of geoid -- work efficiently with geographic data
 ;; Copyright (c) 2020 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;

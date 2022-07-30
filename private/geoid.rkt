@@ -19,7 +19,9 @@
 
 (require racket/match
          racket/math
-         racket/flonum)
+         racket/flonum
+         math/flonum
+         "vmath.rkt")
 (provide (all-defined-out))
 
 
@@ -228,7 +230,6 @@
    (lambda (u v)
      (define z (- 1.0 (* 2.0 u)))
      (define x (- (* 2.0 v) 1.0))
-     (define len (flsqrt (+ (* x x) 1.0 (* z z))))
      (values x -1.0 z))
    (let ([p (make-plane 0.0 -1.0 0.0 0.0 -1.0 0.0)])
      (lambda (x y z) (distance-to-plane x y z p)))))
@@ -309,12 +310,40 @@
 (: lat-lng->unit-vector (-> Real Real (Values Flonum Flonum Flonum)))
 (define (lat-lng->unit-vector lat lon)
   (define Θ (degrees->radians (- 90.0 (real->double-flonum lat))))
-  (define Φ (degrees->radians (real->double-flonum lon)))
   (define sin-Θ (sin Θ))
   (define cos-Θ (cos Θ))
-  (define sin-Φ (sin Φ))
-  (define cos-Φ (cos Φ))
-  (values (* sin-Θ cos-Φ) (* sin-Θ sin-Φ) cos-Θ))
+  (let ([Φ (degrees->radians (real->double-flonum lon))])
+    (define sin-Φ (sin Φ))
+    (define cos-Φ (cos Φ))
+    (values (* sin-Θ cos-Φ) (* sin-Θ sin-Φ) cos-Θ)))
+
+;; This is a version of `lat-lng->unit-vector` which attempts to be "more
+;; correct" by geneating unique vectors at the North and South poles,
+;; regardless of the longitude, as well as the same vector for the -180 and
+;; 180 meridian.  Unfortunately, this is useless, sice some regions are
+;; defined to have "seams" at the 180 meridian and our segment intersection
+;; tests would fail.
+;;
+;; Currently `lat-lng->unit-vector` above will generate slightly different
+;; vectors for the poles and 180 meridian, depending on the direction from
+;; which these locations are "approached", and this works well for the exact
+;; segment intersection tests in tiling.rkt.
+(: lat-lng->unit-vector/useless (-> Real Real (Values Flonum Flonum Flonum)))
+(define (lat-lng->unit-vector/useless lat lon)
+  (cond ((>= lat 90.0)
+         (values 0.0 0.0 1.0))
+        ((<= lat -90.0)
+         (values 0.0 0.0 -1.0))
+        (#t
+         (define Θ (degrees->radians (- 90.0 (real->double-flonum lat))))
+         (define sin-Θ (sin Θ))
+         (define cos-Θ (cos Θ))
+         (if (or (= lon 180.0) (= lon -180.0))
+             (values (- sin-Θ) 0.0 cos-Θ)
+             (let ([Φ (degrees->radians (real->double-flonum lon))])
+               (define sin-Φ (sin Φ))
+               (define cos-Φ (cos Φ))
+               (values (* sin-Θ cos-Φ) (* sin-Θ sin-Φ) cos-Θ))))))
 
 ;; Convert a unit vector on the unit sphere back into the latitude / longitude
 ;; pair.
@@ -423,6 +452,7 @@
   (define-values (face ix iy level) (unpack geoid))
   (decode face ix iy level))
 
+
 
 ;;.................................................................. API ....
 
@@ -527,10 +557,12 @@
                                        geoid)
                           (level-info-sentinel linfo)))))))
 
-(: lat-lng->geoid (-> Real Real Integer))
-(define (lat-lng->geoid lat lon)
+(: lat-lng->geoid (->* (Real Real)
+                       (#:level Integer)
+                       Integer))
+(define (lat-lng->geoid lat lon #:level (level 0))
   (define-values (x y z) (lat-lng->unit-vector lat lon))
-  (unit-vector->geoid x y z 0))
+  (unit-vector->geoid x y z level))
 
 (: geoid->lat-lng (-> Integer (Values Flonum Flonum)))
 (define (geoid->lat-lng id)
@@ -941,3 +973,102 @@
     ;; NOTE: small errors in the unit vector might bring the value below or
     ;; above 1, making `acos` return a complex number.
     (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ))))))
+
+
+;;............................................................. The Cell ....
+
+;; A cell represents the geometric shape of a geoid and it is used for various
+;; region containment and intersection checks.
+(struct cell
+  ([id : Integer]                       ; The original GEOID
+   [level : Integer]                    ; the Geoid level
+   ;; Unit vectors for the corners of the geoid
+   [corners : (List Vector3 Vector3 Vector3 Vector3)]
+   ;; Non-Unit vectors for the normal of each geoid edge.
+   [edges/raw : (List Vector3 Vector3 Vector3 Vector3)])
+  #:transparent)
+
+;; Return a list of unit vectors representing the corners of a geoid
+;; identified an unpacked geoid.
+(: decode-corners(-> Integer Integer Integer Integer
+                     (List Vector3 Vector3 Vector3 Vector3)))
+(define (decode-corners face ix iy level)
+  (when (> face 5)
+    ; there are only 6 faces, from 0 to 5, but the 3 bits used to encode them
+    ; can also represent 6 and 7.  Note that (pack 6 0 0) is used as the
+    ; sentinel geoh id (see below)
+    (error (format "Bad face id: ~a" face)))
+
+  (match-define (level-info id ask sentinel max-coord epsilon)
+    (vector-ref level-information level))
+
+  (: u1 Flonum)
+  (: u2 Flonum)
+  (define-values (u1 u2)
+    (values (real->double-flonum (/ ix max-coord))
+            (real->double-flonum (min 1.0 (/ (add1 ix) max-coord)))))
+
+  (: v1 Flonum)
+  (: v2 Flonum)
+  (define-values (v1 v2)
+    (values (real->double-flonum (/ iy max-coord))
+            (real->double-flonum (min 1.0 (/ (add1 iy) max-coord)))))
+
+  (define uv->xyz (face-uv->xyz (list-ref all-faces face)))
+
+  (define result
+    (list
+     (let-values ([(x y z) (uv->xyz u1 v1)])
+       (flvector x y z))
+     (let-values ([(x y z) (uv->xyz u1 v2)])
+       (flvector x y z))
+     (let-values ([(x y z) (uv->xyz u2 v2)])
+       (flvector x y z))
+     (let-values ([(x y z) (uv->xyz u2 v1)])
+       (flvector x y z))))
+
+  (if (even? face) result (reverse result)))
+
+;; Return a list of non-unit vectors representnig the normal to the plane
+;; defined by two geoid corners on a great circle.  When
+;; USE-ROBUST-CROSS-PRODUCT? is #t, a more precise (but more expensive) cross
+;; product function is used
+(: create-edges/raw (-> (List Vector3 Vector3 Vector3 Vector3) Boolean
+                        (List Vector3 Vector3 Vector3 Vector3)))
+(define (create-edges/raw corners use-robust-cross-product?)
+  (match-define (list c0 c1 c2 c3) corners)
+  (if use-robust-cross-product?
+      (list (robust-cross-product c0 c1)
+            (robust-cross-product c1 c2)
+            (robust-cross-product c2 c3)
+            (robust-cross-product c3 c0))
+      (list (cross-product c0 c1)
+            (cross-product c1 c2)
+            (cross-product c2 c3)
+            (cross-product c3 c0))))
+
+;; Construct a cell from a geoid.
+(: make-cell (-> Integer cell))
+(define (make-cell geoid)
+  (define-values (face ix iy level) (unpack geoid))
+  (define corners (decode-corners face ix iy level))
+  ;; For small geoids, we need to use the more costly, but robust cross
+  ;; product, otherwise the resulting vectors will not be orthogonal and we
+  ;; have incorrect `point-inside-cell?` results.
+  (define edges (create-edges/raw corners (< level 5)))
+  (cell geoid (geoid-level geoid) corners edges))
+
+;; Return #t if point P is indside the CELL.  Points on the edge of the cell
+;; (including the cell corners) are considered to be inside.
+(: point-inside-cell? (-> Vector3 cell Boolean))
+(define (point-inside-cell? p cell)
+  (for/and ([edge (in-list (cell-edges/raw cell))])
+    (<= (dot-product p edge) epsilon.0)))
+
+;; Return #t if point P is outside the CELL.  Points on the edge of the cell
+;; are considered to be outside.  It is possible for a point to be both inside
+;; and outside the cell.
+(: point-outside-cell? (-> Vector3 cell Boolean))
+(define (point-outside-cell? p cell)
+  (for/or ([edge (in-list (cell-edges/raw cell))])
+    (>= (dot-product p edge) (- epsilon.0))))

@@ -1,4 +1,4 @@
-#lang racket/base
+#lang typed/racket/base
 ;; waypoint-alignment.rkt -- functions to determine how closely two paths of
 ;; GEOIDs align
 ;;
@@ -22,5 +22,4 @@
 
 (provide
  waypoint-alignment-cost                ; test, doc
-
  )

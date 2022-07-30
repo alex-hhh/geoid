@@ -17,8 +17,8 @@
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang typed/racket/base
-(require "geoid.rkt"
-         racket/flonum)
+(require racket/flonum
+         "geoid.rkt")
 
 (provide (all-defined-out))
 
@@ -155,7 +155,8 @@
                (begin
                  (fill-row-with-costs i this-row previous-row)
                  (loop (add1 i) previous-row this-row))
-               ;; Note that we swapped lines already, so we need to return the previous one.
+               ;; Note that we swapped lines already, so we need to return the
+               ;; previous one.
                previous-row))
          FlVector))
   (* earth-radius (flvector-ref last-line (sub1 m))))

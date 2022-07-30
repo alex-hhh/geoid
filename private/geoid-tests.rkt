@@ -18,11 +18,18 @@
 ;; You should have received a copy of the GNU Lesser General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
-(require rackunit "geoid.rkt" "waypoint-alignment.rkt"
-         (except-in "geodesy.rkt" earth-radius)
-         math/statistics math/flonum racket/runtime-path
-         math/distributions)
+(require math/distributions
+         math/flonum
+         math/statistics
+         racket/runtime-path
+         rackunit
+         al2-test-runner
+         (except-in "geodesy.rkt"
+                    earth-radius)
+         "geoid.rkt"
+         "tiling.rkt"
+         "vmath.rkt"
+         "waypoint-alignment.rkt")
 
 (define (haversin Θ)
   (fl/ (fl- 1.0 (flcos Θ)) 2.0))
@@ -284,10 +291,10 @@
 
      ;; This is a degenerate case, all longitudes at the poles will encode to
      ;; the same number
-     (define north-pole-geoid (lat-lng->geoid 90 0))
+     (define north-pole-geoid (lat-lng->geoid 90.0 0.0))
      (for ([lon (in-range -180.0 180.0 2.0)])
-       (check-equal? north-pole-geoid (lat-lng->geoid 90 lon)))
-     (define south-pole-geoid (lat-lng->geoid -90 0))
+       (check-equal? north-pole-geoid (lat-lng->geoid 90.0 lon)))
+     #;(define south-pole-geoid (lat-lng->geoid -90.0 0.0))
      #;(for ([lon (in-range -180.0 180.0 2.0)])
        (check-equal? south-pole-geoid (lat-lng->geoid -90 lon)))
 
@@ -297,11 +304,12 @@
        (define id1 (lat-lng->geoid lat 180.0))
        (define id2 (lat-lng->geoid lat -180.0))
 
-       ;; NOTE: the two geoids are not necessarily equal since the 180
-       ;; meridian falls at the edge of the grid squares and small errors will
-       ;; place either to the left or to the right grid cell.
+       ;; NOTE: the two geoids are not always equal since the 180 meridian
+       ;; falls at the edge of the grid squares and small errors will place
+       ;; either to the left or to the right grid cell.  These errors are
+       ;; important for tiling, so we keep it this way.
 
-       ;;(check-equal? id1 id2)
+       #;(check-equal? id1 id2)
 
        (define-values (nlat nlon) (geoid->lat-lng id1))
        (check-= nlat lat 1e-5)
@@ -653,6 +661,490 @@
 
    ))
 
+(define (pp p c)
+  (define-values (face ix iy level) (unpack (cell-id c)))
+  (printf "*** ~x (~a, ~a, ~a, ~a)~%" (cell-id c) face ix iy level)
+  (printf "    cell: ~a~%" c)
+  (printf "    point: ~a~%" p)
+  (printf "    dot-product: ~a~%" (map (lambda (v) (dot-product p v)) (cell-edges/raw c))))
+
+(define cells-test-suite
+  (test-suite
+   "cells"
+   (test-case "point-inside-cell?"
+
+     (for ([face (in-range 6)])
+       (define g (pack face 0 0 30))
+       (define c (make-cell g))
+       (define-values (x y z) (geoid->unit-vector g))
+       (define p (flvector x y z))
+       (check-true (point-inside-cell? p c)
+                   (format "center point should be inside (geoid #x~x)" g))
+       (for ([r (in-list (cell-corners c))])
+         (check-true (point-inside-cell? r c)
+                     (format "corner point should be inside (geoid #x~x)" g)))
+       (for ([h (in-list (adjacent-geoids g))])
+         (define-values (x y z) (geoid->unit-vector h))
+         (check-false (point-inside-cell? (flvector x y z) c)
+                      (format "neighbor center should be outside (geoid #x~x, neighbor #x~x)"
+                              g h))))
+
+     (for ([_k (in-range 10000)])
+       (define level (random 30))
+       (define g (random-geoid level))
+       (define-values (x y z) (geoid->unit-vector g))
+       (define c (make-cell g))
+       (check-true (point-inside-cell? (flvector x y z) c)
+                   (format "center point should be inside (geoid #x~x)" g))
+       ;; This has errors for small geoids...
+       (for ([r (in-list (cell-corners c))])
+         (check-true (point-inside-cell? r c)
+                     (format "corner point should be inside (geoid #x~x) ~a" g r)))
+       (for ([h (in-list (adjacent-geoids g))])
+         (define-values (x y z) (geoid->unit-vector h))
+         (check-true (point-outside-cell? (flvector x y z) c)
+                     (format "neighbor center should be outside (geoid #x~x, neighbor #x~x)"
+                             g h)))))))
+
+;; A loop track around the swan river in Perth, used to test geoid covering
+(define-runtime-path swan-track-file "./test-data/swan-track.rktd")
+(define swan-track (call-with-input-file swan-track-file read))
+(define-runtime-path swan-track-covering-file "./test-data/swan-track-covering.rktd")
+(define swan-track-expected-covering (call-with-input-file swan-track-covering-file read))
+
+;; A small island on the France-Spain border, defined in ClockWise order
+;;
+;; https://en.wikipedia.org/wiki/Pheasant_Island
+(define-runtime-path pheasant-island-file "./test-data/pheasant-island.rktd")
+(define pheasant-island (call-with-input-file pheasant-island-file read))
+
+;; A small Italian region inside Switzerland, defined in CounterClockWise
+;; order.
+;;
+;; https://en.wikipedia.org/wiki/Campione_d'Italia
+(define-runtime-path campione-ditalia-file "./test-data/campione-ditalia.rktd")
+(define campione-ditalia (call-with-input-file campione-ditalia-file read))
+
+;; This is the Antarctica/McMurdo time zone which contains the South Pole.  It
+;; is defined such that it looks nice on a Mercator map, but it goes through
+;; the South Pole, and uses two separate values for it, (-90, -180) and (-90,
+;; 180)
+(define-runtime-path antarctica-mcmurdo-file "./test-data/mcmurdo.rktd")
+(define antarctica-mcmurdo (call-with-input-file antarctica-mcmurdo-file read))
+(define-runtime-path antarctica-mcmurdo-contains-file "./test-data/mcmurdo-contains.rktd")
+(define antarctica-mcmurdo-contains (call-with-input-file antarctica-mcmurdo-contains-file read))
+(define-runtime-path antarctica-mcmurdo-intersects-file "./test-data/mcmurdo-intersects.rktd")
+(define antarctica-mcmurdo-intersects (call-with-input-file antarctica-mcmurdo-intersects-file read))
+
+;; This is the first loop in the Pacific/Funafuti time zone, it has a line
+;; along the 180 meridian, which gave me endless trouble with the triangle
+;; signs.
+(define-runtime-path pacific-funafuti-file "./test-data/funafuti.rktd")
+(define pacific-funafuti (call-with-input-file pacific-funafuti-file read))
+
+(define-runtime-path weir-climbout-file "./test-data/weir-climbout.rktd")
+(define weir-climbout (call-with-input-file weir-climbout-file read))
+(define-runtime-path weir-climbout-covering-file "./test-data/weir-climbout-covering.rktd")
+(define weir-climbout-covering (call-with-input-file weir-climbout-covering-file read))
+
+(define (make-circular-track lat lon radius
+         #:segments [segments 24] #:closed? [closed? #t])
+  (define step (- (/ 360.0 segments)))
+  (define track
+    (for/list ([bearing (in-range 0.0 -360.0 step)])
+      (define-values (clat clon) (destination-point lat lon bearing radius))
+      (vector clat clon)))
+  (if closed?
+      (append track (list (car track)))
+      track))
+
+(define tiling-test-suite
+  (test-suite
+   "tiling"
+
+   (test-case "angle-contains-vertex?"
+     (define v0 (flvector -0.3704386151255099 0.7632268034408783 -0.5293959566650591))
+     (define v1 (flvector -0.37044282581595456 0.763232968638743 -0.5293841217720663))
+     (define v2 (flvector -0.37044282581595456 0.763232968638743 -0.5293841217720663))
+
+     ;; I'm still not sure what it means for an angle to contain its own
+     ;; middle vertex, but the property that we are interested in is that, if
+     ;; an angle contains a vertex that the reverse angle does not.
+     (check-false (angle-contains-vertex? v0 v1 v2))
+     (check-true (angle-contains-vertex? v2 v1 v0))
+
+
+     (define a (flvector 1.0 0.0 0.0))
+     (define b (flvector 0.0 1.0 0.0))
+     (define ref_b (reference-direction b))
+     (check-false (angle-contains-vertex? a b a))
+     (check-true (angle-contains-vertex? ref_b b a))
+     (check-false (angle-contains-vertex? a b ref_b))
+
+     (define-values (lat lon) (unit-vector->lat-lng 0.0 1.0 0.0))
+     (define points (map ->unit-vector (make-circular-track lat lon 100)))
+     (define count
+       (for/sum ([p1 (in-list points)]
+                 [p2 (in-list (cdr points))])
+         (define c1 (angle-contains-vertex? p2 b p1))
+         (define c2 (angle-contains-vertex? p1 b p2))
+         ;; One (and only one) of the angles (P1 -> B -> P2) and (P2 -> B ->
+         ;; P1) will contain the vertex B.
+         (check xor c1 c2)
+         (if c1 1 0)))
+     (check-equal? count 1))
+
+   (test-case "segment and vertex crossing"
+     (define p0 (->unit-vector #(0.0 5.0)))
+     (define p1 (->unit-vector #(0.0 10.0)))
+     (define p2 (->unit-vector #(0.0 20.0)))
+
+     (define s0 (make-segment p1 p2))
+     (define s1 (make-segment p2 p0))
+
+     (define north-pole (flvector 0.0 0.0 1.0))
+     (define south-pole (flvector 0.0 0.0 -1.0))
+
+     ;; The p3 -- north pole segment should cross s0, while the p3 --
+     ;; south-pole should not.
+     (define p3 (->unit-vector #(-10.0 15.0)))
+     (check-equal? (segment-crossing-sign (make-segment p3 north-pole) s0) 1)
+     (check-equal? (segment-crossing-sign (make-segment north-pole p3) s0) 1)
+     (check-equal? (segment-crossing-sign (make-segment p3 south-pole) s0) -1)
+     (check-equal? (segment-crossing-sign (make-segment south-pole p3) s0) -1)
+
+     ;; The line from p4 to the north-pole should touch the start of S0 and
+     ;; the end of S1, it is only intersecting S1, i.e. P1 is on S1 but not
+     ;; S0.
+     (define p4 (->unit-vector #(-10.0 10.0)))
+     (check-equal? (segment-crossing-sign (make-segment p4 north-pole) s0) -1)
+     (check-equal? (segment-crossing-sign (make-segment north-pole p4) s0) -1)
+     (check-equal? (segment-crossing-sign (make-segment p4 north-pole) s1) 1)
+     (check-equal? (segment-crossing-sign (make-segment north-pole p4) s1) 1)
+
+
+     ;; The line from p5 -- north-pole should touch the end of S0
+     (define p5 (->unit-vector #(-10.0 20.0)))
+     (check-equal? (segment-crossing-sign (make-segment p5 north-pole) s0) -1)
+     (check-equal? (segment-crossing-sign (make-segment north-pole p5) s0) -1)
+     (check-equal? (segment-crossing-sign s0 (make-segment p5 north-pole)) -1)
+     (check-equal? (segment-crossing-sign s0 (make-segment north-pole p5)) -1)
+
+     ;; p6 is on S0, but only one segment is considered to be crossing (the
+     ;; north pole one).
+     (define p6 (->unit-vector #(0.0 15.0)))
+     (check-equal? (segment-crossing-sign (make-segment p6 north-pole) s0) 1)
+     (check-equal? (segment-crossing-sign (make-segment north-pole p6) s0) 1)
+     (check-equal? (segment-crossing-sign (make-segment p6 south-pole) s0) -1)
+     (check-equal? (segment-crossing-sign (make-segment south-pole p6) s0) -1)
+     (check-equal? (segment-crossing-sign s0 (make-segment p6 north-pole)) 1)
+     (check-equal? (segment-crossing-sign s0 (make-segment north-pole p6)) 1)
+     (check-equal? (segment-crossing-sign s0 (make-segment p6 south-pole)) -1)
+     (check-equal? (segment-crossing-sign s0 (make-segment south-pole p6)) -1)
+
+
+     ;; segment-crossing-sign returns 0 if two points from the segments are
+     ;; the same...
+
+     (let ([s1 (make-segment p1 north-pole)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+
+     (let ([s1 (make-segment north-pole p1)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+
+     (let ([s1 (make-segment p1 south-pole)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-false (vertex-crossing? s1 s0))
+       (check-true (vertex-crossing? s0 s1)))
+
+     (let ([s1 (make-segment south-pole p1)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-false (vertex-crossing? s1 s0))
+       (check-true (vertex-crossing? s0 s1)))
+
+     ;; p2 is on the end of S0
+     (let ([s1 (make-segment p2 north-pole)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+
+     (let ([s1 (make-segment north-pole p2)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+
+     (let ([s1 (make-segment p2 south-pole)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+
+     (let ([s1 (make-segment south-pole p2)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+
+     ;; A segment will cross itself (even if it is reversed)
+     (check-equal? (segment-crossing-sign s0 s0) 0)
+     (check-true (vertex-crossing? s0 s0))
+
+     (let ([s1 (make-segment p2 p1)])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0)))
+
+     ;; Segments are co-linear
+     (let ([s1 (make-segment p1 (->unit-vector #(0.0 15.0)))])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-false (vertex-crossing? s1 s0))
+       (check-true (vertex-crossing? s0 s1)))
+     (let ([s1 (make-segment p1 (->unit-vector #(0.0 25.0)))])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-true (vertex-crossing? s1 s0))
+       (check-false (vertex-crossing? s0 s1)))
+     (let ([s1 (make-segment p1 (->unit-vector #(0.0 -10.0)))])
+       (check-equal? (segment-crossing-sign s1 s0) 0)
+       (check-false (vertex-crossing? s1 s0))
+       (check-true (vertex-crossing? s0 s1))))
+
+   (test-case "is-point-inside-loop?"
+     (define test-point (flvector 0.0 0.0 1.0))
+
+     ;; NOTE: the swan track is defined clockwise, so we expect the north pole
+     ;; to be inside the track by default...
+
+     (let* ([track swan-track]
+            [segments (track->segments track)])
+       (define-values (origin is-inside?) (get-suitable-origin segments))
+       (check-true
+        (is-point-inside-loop? test-point segments origin is-inside?)))
+
+     (let* ([track (reverse swan-track)]
+            [segments (track->segments track)])
+       (define-values (origin is-inside?) (get-suitable-origin segments))
+       (check-false
+        (is-point-inside-loop? test-point segments origin is-inside?)))
+
+     (let* ([track '(#(0.0 -10.0) #(-10.0 0.0) #(0.0 10.0) #(10.0 0.0))]
+            [segments (track->segments track #t)]
+            [origin (flvector 0.0 0.0 1.0)])
+
+       ;; The test segment exits through a corner of the track
+       (let ([test-point (->unit-vector #(0.0 0.0))])
+         (check-true
+          (is-point-inside-loop? test-point segments origin #f)))
+
+       ;; The test segment touches a point of our track
+       (let ([test-point (->unit-vector #(-10.0 -10.0))])
+         (check-false
+          (is-point-inside-loop? test-point segments origin #f)))))
+
+   (test-case "guess-winding-order"
+     (check-equal? (guess-winding-order pheasant-island) 'cw)
+     (check-equal? (guess-winding-order campione-ditalia) 'ccw))
+
+   (test-case "empty-cap"
+     (check-equal? (geoid-tiling-for-region the-empty-cap 13 18) '()))
+   (test-case "singular-cap"
+     ;; This is a cap containing only its center, tiling it should produce a
+     ;; single geoid at the minimum level.
+     (define singular-cap (make-spherical-cap -31.96355 115.84529 0))
+     (define covering (geoid-tiling-for-region singular-cap 13 18))
+     (check-equal? covering '(2989588974810431488)))
+   (test-case "non-singular-cap"
+     ;; The test case was created by generating a covering, visually
+     ;; inspecting it on the map (see the tools.rkt file) and saving it here.
+     ;; If an unexpected result is produced here, the results can be
+     ;; visualized on a map to determine what is wrong
+     (define test-cap (make-spherical-cap -31.96355 115.84529 500))
+     (define covering (geoid-tiling-for-region test-cap 13 18))
+     (define expected-result
+       '(#x297cd8ab44000000 #x297cd8ab30000000 #x297cd8ab10000000 #x297cd8ab6c000000
+         #x297cd8ab74000000 #x297cd8aac0000000 #x297cd8aa40000000 #x297cd8ab9c000000
+         #x297cd8ab94000000 #x297cd8abb0000000 #x297cd8abd0000000 #x297cd8a97c000000
+         #x297cd8a990000000 #x297cd8a9f0000000 #x297d20ac84000000 #x297d20ac9c000000
+         #x297d20aca4000000 #x297d20acac000000 #x297d20aa14000000 #x297d20aa0c000000
+         #x297d20aa34000000 #x297d20aa3c000000 #x297d20aa50000000 #x297d20aa70000000
+         #x297d20abc4000000 #x297d20abcc000000 #x297d20ab90000000 #x297d20abb0000000
+         #x297d20ab40000000 #x297d20aac0000000 #x297d275540000000 #x297d2754c0000000
+         #x297d275450000000 #x297d275470000000 #x297d275414000000 #x297d275430000000
+         #x297d2755c0000000 #x297d275354000000 #x297d27535c000000 #x297d275364000000
+         #x297d27537c000000 #x297d275610000000 #x297d275674000000 #x297d27567c000000
+         #x297d27566c000000 #x297d275684000000 #x297cdf5590000000 #x297cdf55a4000000
+         #x297cdf5540000000 #x297cdf54e4000000 #x297cdf54d0000000))
+     (check-equal? (sort covering <) (sort expected-result <)))
+   (test-case "open-polyline"
+     (define region (make-open-polyline weir-climbout))
+     (define covering (geoid-tiling-for-region region 13 18))
+     (define expected-result weir-climbout-covering)
+     (check-equal? (sort covering <) (sort expected-result <)))
+   (test-case "closed-polyline"
+     (define expected-result swan-track-expected-covering)
+
+     (define region (make-closed-polyline swan-track #:ccw? #f))
+     (define covering (geoid-tiling-for-region region 13 18))
+     (check-equal? (sort covering <) (sort expected-result <))
+
+     (define indexed-region (make-closed-polyline
+                             swan-track #:ccw? #f #:force-indexed? #t))
+     (define indexed-covering (geoid-tiling-for-region indexed-region 13 18))
+     (check-equal? (sort indexed-covering <) (sort expected-result <)))
+
+   (test-case "closed-polyline-around-north-pole"
+     (define track
+       '(#(89.95 0.0) #(89.95 90.0) #(89.95 180.0) #(89.95 -90.0)))
+     (define expected-result
+       '(#x4555552b00000000 #x4555552d00000000 #x4555552f00000000 #x4555553400000000 #x4555553900000000
+         #x4555553b00000000 #x4555553f00000000 #x4555555000000000 #x4555556400000000 #x4555556900000000
+         #x4555556b00000000 #x4555556f00000000 #x4555557b00000000 #x4555557d00000000 #x4555557f00000000
+         #x4fffff8100000000 #x4fffff8500000000 #x4fffff8700000000 #x4fffff8c00000000 #x4fffff9100000000
+         #x4fffff9300000000 #x4fffff9500000000 #x4fffffc100000000 #x4fffffc300000000 #x4fffffc500000000
+         #x4fffffd100000000 #x4fffffd500000000 #x4fffffd700000000 #x4fffffdc00000000 #x4ffffff000000000
+         #x5000001000000000 #x5000002400000000 #x5000002900000000 #x5000002b00000000 #x5000002f00000000
+         #x5000003b00000000 #x5000003d00000000 #x5000003f00000000 #x5000006b00000000 #x5000006d00000000
+         #x5000006f00000000 #x5000007400000000 #x5000007900000000 #x5000007b00000000 #x5000007f00000000
+         #x5aaaaa8100000000 #x5aaaaa8300000000 #x5aaaaa8500000000 #x5aaaaa9100000000 #x5aaaaa9500000000
+         #x5aaaaa9700000000 #x5aaaaa9c00000000 #x5aaaaab000000000 #x5aaaaac100000000 #x5aaaaac500000000
+         #x5aaaaac700000000 #x5aaaaacc00000000 #x5aaaaad100000000 #x5aaaaad300000000 #x5aaaaad500000000))
+     (define region (make-closed-polyline track))
+     (define covering (geoid-tiling-for-region region 16 18))
+     (check-equal? (sort covering <) (sort expected-result <))
+
+     (define indexed-region (make-closed-polyline track #:force-indexed? #t))
+     (define indexed-covering (geoid-tiling-for-region indexed-region 16 18))
+     (check-equal? (sort indexed-covering <) (sort expected-result <)))
+
+   (test-case "Antarctica/McMurdo covering"
+     (define region (make-closed-polyline antarctica-mcmurdo #:ccw? #f))
+     (define-values (contains intersects) (coarse-geoid-tiling-for-region region 24))
+     (define expected-contains antarctica-mcmurdo-contains)
+     (define expected-intersects antarctica-mcmurdo-intersects)
+     (check-equal? contains expected-contains)
+     (check-equal? intersects expected-intersects))
+
+   (test-case "Pacific/Funafuti covering"
+     (define region (make-closed-polyline pacific-funafuti))
+     (define-values (contains intersects) (coarse-geoid-tiling-for-region region 24))
+     (define expected-contains '())
+     (define expected-intersects '(#x7027000000000000))
+     (check-equal? contains expected-contains)
+     (check-equal? intersects expected-intersects))
+
+   (test-case "overlapping union"
+     (define cap1 (make-spherical-cap -31.96355 115.84529 500))
+     (define cap2 (make-spherical-cap -31.96537 115.84900 500))
+     (define u (join-regions cap1 cap2))
+     (define covering (geoid-tiling-for-region u 13 18))
+     (define expected-result
+       '(#x297cd8ab44000000 #x297cd8ab30000000 #x297cd8ab10000000 #x297cd8ab6c000000 #x297cd8ab74000000
+         #x297cd8aac0000000 #x297cd8aa40000000 #x297cd8ab9c000000 #x297cd8ab94000000 #x297cd8abb0000000
+         #x297cd8abd0000000 #x297cd8a97c000000 #x297cd8a990000000 #x297cd8a9f0000000 #x297d20a914000000
+         #x297d20a90c000000 #x297d20a930000000 #x297d20a950000000 #x297d20a970000000 #x297d20a990000000
+         #x297d20a9f4000000 #x297d20ae5c000000 #x297d20ae64000000 #x297d20ae74000000 #x297d20ae7c000000
+         #x297d20aed0000000 #x297d20aee4000000 #x297d20aef4000000 #x297d20aeec000000 #x297d20ae90000000
+         #x297d20aeb0000000 #x297d20ac40000000 #x297d20add0000000 #x297d20adb0000000 #x297d20ad10000000
+         #x297d20ad30000000 #x297d20acc0000000 #x297d20ab00000000 #x297d275540000000 #x297d2754c0000000
+         #x297d275450000000 #x297d275470000000 #x297d275414000000 #x297d275430000000 #x297d2755c0000000
+         #x297d275350000000 #x297d275330000000 #x297d275314000000 #x297d275370000000 #x297d2752d4000000
+         #x297d275384000000 #x297d275610000000 #x297d275674000000 #x297d27567c000000 #x297d27566c000000
+         #x297d275684000000 #x297cdf5590000000 #x297cdf55a4000000 #x297cdf5540000000 #x297cdf54e4000000
+         #x297cdf54d0000000))
+     (check-equal? (sort covering <) (sort expected-result <)))
+
+   (test-case "disjoint union"
+     (define cap1 (make-spherical-cap -31.96355 115.84529 500))
+     (define cap3 (make-spherical-cap -31.97429 115.86697 500))
+     (define u (join-regions cap1 cap3))
+     (define covering (geoid-tiling-for-region u 13 18))
+     (define expected-result
+       '(#x297cd8ab44000000 #x297cd8ab30000000 #x297cd8ab10000000 #x297cd8ab6c000000 #x297cd8ab74000000
+         #x297cd8aac0000000 #x297cd8aa40000000 #x297cd8ab9c000000 #x297cd8ab94000000 #x297cd8abb0000000
+         #x297cd8abd0000000 #x297cd8a97c000000 #x297cd8a990000000 #x297cd8a9f0000000 #x297d20be2c000000
+         #x297d20be34000000 #x297d20be3c000000 #x297d20be50000000 #x297d20be6c000000 #x297d20be64000000
+         #x297d20bfc0000000 #x297d20bf40000000 #x297d20bec0000000 #x297d20b940000000 #x297d20b8c0000000
+         #x297d20b850000000 #x297d20b870000000 #x297d20b814000000 #x297d20b80c000000 #x297d20b834000000
+         #x297d20b83c000000 #x297d20b99c000000 #x297d20b9b0000000 #x297d20b9cc000000 #x297d20ac84000000
+         #x297d20ac9c000000 #x297d20aca4000000 #x297d20acac000000 #x297d20aa14000000 #x297d20aa0c000000
+         #x297d20aa34000000 #x297d20aa3c000000 #x297d20aa50000000 #x297d20aa70000000 #x297d20abc4000000
+         #x297d20abcc000000 #x297d20ab90000000 #x297d20abb0000000 #x297d20ab40000000 #x297d20aac0000000
+         #x297d20ea0c000000 #x297d20ea70000000 #x297d20eac4000000 #x297d20eaec000000 #x297d20ea90000000
+         #x297d20eab0000000 #x297d275540000000 #x297d2754c0000000 #x297d275450000000 #x297d275470000000
+         #x297d275414000000 #x297d275430000000 #x297d2755c0000000 #x297d275354000000 #x297d27535c000000
+         #x297d275364000000 #x297d27537c000000 #x297d275610000000 #x297d275674000000 #x297d27567c000000
+         #x297d27566c000000 #x297d275684000000 #x297cdf5590000000 #x297cdf55a4000000 #x297cdf5540000000
+         #x297cdf54e4000000 #x297cdf54d0000000 #x297d20c040000000 #x297d20c1d0000000 #x297d20c1e4000000
+         #x297d20c1f4000000 #x297d20c1ec000000 #x297d20c190000000 #x297d20c1b0000000 #x297d20c110000000
+         #x297d20c170000000 #x297d20c144000000 #x297d20c15c000000 #x297d20c14c000000 #x297d20c130000000
+         #x297d20c0c0000000 #x297d20c740000000 #x297d20c6d0000000 #x297d20c6b4000000 #x297d20c6bc000000
+         #x297d20c6e4000000 #x297d20c6ec000000 #x297d20c6fc000000 #x297d20c790000000 #x297d20c7a4000000
+         #x297d20c7ac000000 #x297d20c7bc000000 #x297d20c7f4000000 #x297d209550000000 #x297d209564000000
+         #x297d20957c000000))
+     (check-equal? (sort covering <) (sort expected-result <)))
+
+   (test-case "intersection"
+     (define cap1 (make-spherical-cap -31.96355 115.84529 500))
+     (define cap2 (make-spherical-cap -31.96537 115.84900 500))
+     (define u (intersect-regions cap1 cap2))
+     (define covering (geoid-tiling-for-region u 13 18))
+     (define expected-result
+       '(#x297cd8aaac000000 #x297cd8aaa4000000 #x297cd8aa9c000000 #x297d20ac84000000 #x297d20ac9c000000
+         #x297d20aca4000000 #x297d20acac000000 #x297d20aa14000000 #x297d20aa0c000000 #x297d20aa34000000
+         #x297d20aa3c000000 #x297d20aa50000000 #x297d20aa70000000 #x297d20abc4000000 #x297d20abcc000000
+         #x297d20ab90000000 #x297d20abb0000000 #x297d20ab40000000 #x297d20aac0000000 #x297d275540000000
+         #x297d2754c0000000 #x297d275450000000 #x297d275464000000 #x297d27547c000000 #x297d27559c000000
+         #x297d2755a4000000 #x297d2755ac000000 #x297d2755b4000000 #x297d275354000000 #x297d27535c000000
+         #x297d275364000000 #x297d27537c000000 #x297cdf558c000000 #x297cdf5584000000 #x297cdf557c000000
+         #x297cdf5564000000 #x297cdf555c000000 #x297cdf5554000000))
+     (check-equal? (sort covering <) (sort expected-result <)))
+
+   (test-case "disjoint intersection"
+     (define cap1 (make-spherical-cap -31.96355 115.84529 500))
+     (define cap3 (make-spherical-cap -31.97429 115.86697 500))
+     (define u (intersect-regions cap1 cap3))
+     (define covering (geoid-tiling-for-region u 13 18))
+     ;; Caps are disjoint, expecting an empty intersection set
+     (define expected-result '())
+     (check-equal? (sort covering <) (sort expected-result <)))
+
+   (test-case "subtraction"
+     (define cap1 (make-spherical-cap -31.96355 115.84529 500))
+     (define cap2 (make-spherical-cap -31.96537 115.84900 500))
+     (define u (subtract-regions cap1 cap2))
+     (define covering (geoid-tiling-for-region u 13 18))
+     (define expected-result
+       '(#x297cd8ab44000000 #x297cd8ab30000000 #x297cd8ab10000000 #x297cd8ab6c000000 #x297cd8ab74000000
+         #x297cd8aac0000000 #x297cd8aa40000000 #x297cd8ab9c000000 #x297cd8ab94000000 #x297cd8abb0000000
+         #x297cd8abd0000000 #x297cd8a97c000000 #x297cd8a990000000 #x297cd8a9f0000000 #x297d20aa0c000000
+         #x297d20aa74000000 #x297d275564000000 #x297d275574000000 #x297d27557c000000 #x297d27545c000000
+         #x297d275444000000 #x297d27544c000000 #x297d275470000000 #x297d275414000000 #x297d275430000000
+         #x297d2755c0000000 #x297d27537c000000 #x297d275610000000 #x297d275674000000 #x297d27567c000000
+         #x297d27566c000000 #x297d275684000000 #x297cdf5590000000 #x297cdf55a4000000 #x297cdf5540000000
+         #x297cdf54e4000000 #x297cdf54d0000000))
+     (check-equal? (sort covering <) (sort expected-result <)))
+
+   (test-case "disjoint subtraction"
+     (define cap1 (make-spherical-cap -31.96355 115.84529 500))
+     (define cap3 (make-spherical-cap -31.97429 115.86697 500))
+     (define u (subtract-regions cap1 cap3))
+     (define covering (geoid-tiling-for-region u 13 18))
+     (define expected-result
+       '(#x297cd8ab44000000 #x297cd8ab30000000 #x297cd8ab10000000 #x297cd8ab6c000000 #x297cd8ab74000000
+         #x297cd8aac0000000 #x297cd8aa40000000 #x297cd8ab9c000000 #x297cd8ab94000000 #x297cd8abb0000000
+         #x297cd8abd0000000 #x297cd8a97c000000 #x297cd8a990000000 #x297cd8a9f0000000 #x297d20ac84000000
+         #x297d20ac9c000000 #x297d20aca4000000 #x297d20acac000000 #x297d20aa14000000 #x297d20aa0c000000
+         #x297d20aa34000000 #x297d20aa3c000000 #x297d20aa50000000 #x297d20aa70000000 #x297d20abc4000000
+         #x297d20abcc000000 #x297d20ab90000000 #x297d20abb0000000 #x297d20ab40000000 #x297d20aac0000000
+         #x297d275540000000 #x297d2754c0000000 #x297d275450000000 #x297d275470000000 #x297d275414000000
+         #x297d275430000000 #x297d2755c0000000 #x297d275354000000 #x297d27535c000000 #x297d275364000000
+         #x297d27537c000000 #x297d275610000000 #x297d275674000000 #x297d27567c000000 #x297d27566c000000
+         #x297d275684000000 #x297cdf5590000000 #x297cdf55a4000000 #x297cdf5540000000 #x297cdf54e4000000
+         #x297cdf54d0000000))
+     (check-equal? (sort covering <) (sort expected-result <)))
+
+   ))
+
 (define (test-data-points/vincenty lat1 lon1 lat2 lon2)
   (define-values (distance-1 initial-bearing-1 final-bearing-1)
     (vincenty-inverse lon1 lat1 lon2 lat2))
@@ -755,19 +1247,20 @@
 
   ))
 
-
 (module+ test
   (require al2-test-runner)
   (parameterize ([current-pseudo-random-generator (make-pseudo-random-generator)])
     (random-seed 42)                    ; ensure our test are deterministic
     (run-tests #:package "geoid"
                #:results-file "test-results-geoid.xml"
-               ;; #:exclude '(("adjacent-geoids"))
-               ;; #:only '(("waypoint-alignment" "dtw + dtw/memory-efficient equivalence"))
+               ;;#:exclude '(("tiling" "Antarctica/McMurdo covering"))
+               ;;#:only '(("tiling" "angle-contains-vertex?"))
                hilbert-distance-test-suite
                pack-unpack-testsuite
                faces-test-suite
                geoid-manipulation-test-suite
                adjacent-test-suite
                waypoint-alignment-test-suite
+               cells-test-suite
+               tiling-test-suite
                geodesy-test-suite)))

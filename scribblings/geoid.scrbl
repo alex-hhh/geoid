@@ -1,7 +1,9 @@
 #lang scribble/manual
 @require[@for-label[geoid
+                    racket/class
                     geoid/waypoint-alignment
                     geoid/geodesy
+                    geoid/tiling
                     racket/contract/base
                     racket/base]]
 
@@ -52,13 +54,14 @@ the same API and functionality as that library.
 
 @section{Converting to and from Latitude/Longitude}
 
-@defproc*[([(lat-lng->geoid [lat real?] [lng real?]) exact-integer?]
+@defproc*[([(lat-lng->geoid [lat real?] [lng real?] [#:level level exact-integer? 0]) exact-integer?]
           [(geoid->lat-lng [geoid exact-integer?]) (values real? real?)])]{
 
   Convert a geographic coordinate (latidude, longitude) to and from a geoid.
-  The returned geoid will be at the highest level of precision (level
-  @racket[0]), but @racket[geoid->lat-lng] will also accept geoids at a lower
-  precision (a level higher than @racket[0]).
+  @racket[lat-lng->geoid] will return a geoid at the specified @racket[level]
+  of precision, by default at the highest level of precision, level
+  @racket[0]. @racket[geoid->lat-lng] will accept geoids at any level of
+  precision.
 
   @racket[geoid->lat-lng] will return the latitude/longitude coordinates
   corresponding to the center of the geoid and this will introduce an error in
@@ -167,7 +170,6 @@ the same API and functionality as that library.
   @racket[last-valid-geoid], but shorter to type.
 
 }
-
 
 @defproc[(geoid-level [geoid exact-integer?]) (integer-in 0 30)]{
 
@@ -337,6 +339,154 @@ the same API and functionality as that library.
   paths are to each other, but also on the length of the paths, so it is up to
   the caller of the funtion to decide how to interpret the resulting cost and
   determine if the two paths are the same or not.
+
+}
+
+@section{Region Tiling}
+@defmodule[geoid/tiling]
+
+The @racket[geoid/tiling] module contains functions to calculate geoid
+coverings for regions covering the earth surface.  A geoid covering is a list
+of geoids which are inside a region.  This functionality can be used to
+implement fast region containment tests for geographic data.
+
+@defclass[region% object% ()]{
+
+  Region objects define a region on the earth surface and are used for tiling,
+  but otherwise they are opaque objects.
+
+}
+
+@defproc[(make-spherical-cap [lat real?] [lon real?] [radius real?])
+         (is-a?/c region%)]{
+
+  Create a @racket[region%] which is a circle around the
+  @racket[lat]/@racket[lon] point, where @racket[radius] specifies the radius
+  of the circle, in meters.  The circle extends around the sphere representing
+  Earth, thus the name "spherical cap".
+
+}
+
+@defproc[(make-open-polyline [track (listof (vector real? real?))])
+         (is-a?/c region%)]{
+
+  Create a @racket[region%] representing the lines connecting lat/lon points
+  in @racket[track].
+
+  This is not strictly a "region", but sometimes it is useful to determine the
+  geoid covering for a stretch of road, and this can be done by defining the
+  road as a sequence of points and tiling it with geoids.
+
+}
+
+@defproc[(make-closed-polyline [track (listof (vector real? real?))]
+                               [#:ccw? ccw? #t])
+         (is-a?/c region%)]{
+
+  Create a @racket[region%] representing the inside region defined by the
+  lines connecting lat/lon points in @racket[track].
+
+  On a sphere (which the geoid library uses as a model for Earth), each closed
+  list of points defines two regions, since the entire sphere surface is
+  finite.  The simplest way to visualize this is with a sequence of points
+  along the Earths equator, which defines two regions: the northen hemisphere
+  and the southern hemisphere.  The @racket[ccw?] parameter specifies which
+  region is the "inside" region defined by the @racket[track]: when
+  @racket[ccw?] is @racket[#t], the inside is the region which has the points
+  in the counter-clockwise order, or to the left of the segments defined by
+  the points as we go around the @racket[track].
+
+  See also @racket[guess-winding-order] for determining the winding order of a
+  sequence of points.
+
+  The closed polyline defined by @racket[track] cannot have segments that
+  intersect each other.
+
+}
+
+@defproc[(join-regions [r (is-a?/c region%)] ...+)
+         (is-a?/c region%)]{
+
+  Create a new region which is the union of the regions passed in as input.
+
+}
+
+@defproc[(intersect-regions [r (is-a?/c region%)] ...+)
+         (is-a?/c region%)]{
+
+  Create a new region which is the intersection of the regions passed in as
+  input.
+
+  This function can be used to define regions from GeoJSON "polygon with
+  holes" inputs -- since the inner polygons have oposite winding order from
+  the outer polygon, they can be created with the same winding order as the
+  outer one, thus defining the opposite, or outer region, and intersecting
+  them with the outer region.
+
+}
+
+@defproc[(subtract-regions [r1 (is-a?/c region%)] [r2 (is-a?/c region%)])
+         (is-a?/c region%)]{
+
+  Create a region containg the points which are inside @racket[r1] but not
+  inside @racket[r2].
+
+}
+
+@defproc[(guess-winding-order [track (listof (vector real? real?))])
+         (or/c 'cw 'ccw)]{
+
+  Guess the winding order (clockwise or counter-clockwise) for the polygon
+  defined by @racket[track], which is a list of latitude/longitude points. The
+  guess works for "usual" polygons which are much smaller than a hemisphere
+  and assumes that the "inside" is the smaller part.
+
+  Regions deifned in GeoJSON objects don't specify a winding order, so this
+  function can be used to determine the winding order of polygons inside
+  GeoJSON objects, which can be passed on to @racket[make-closed-polyline].
+
+}
+
+@defproc[(geoid-tiling-for-region [r (is-a?/c region%)]
+                                  [min-level integer?]
+                                  [max-level integer?])
+         (listof integer?)]{
+
+  Return a list of geoids which cover the region @racket[r].  The region is
+  covered with geoids of level @racket[max-level] first, than refined along
+  the region borders with geoids down to @racket[min-level].
+
+  See @racket[geoid-level] for a discution on the geoid levels.
+
+  This function calls @racket[coarse-geoid-tiling-for-region] than
+  @racket[refine-geoid-tiling-for-region] for each geoid which intersects the
+  region, and returns all the geoids in a single list.
+
+}
+
+@defproc[(coarse-geoid-tiling-for-region [r (is-a?/c region%)]
+                                         [level integer?])
+         (values (listof integer?) (listof integer?))]{
+
+  Return two lists of geoids at @racket[level] which cover the region
+  @racket[r].  All geoids will be the same level.  The first list are all the
+  geoids which are entirely inside the region @racket[r], while the second
+  list contains all the geoids which intersect the region.
+
+  See @racket[geoid-level] for a discution on the geoid levels.
+
+}
+
+@defproc[(refine-geoid-tiling-for-region [r (is-a?/c region%)]
+                                         [geoid integer?]
+                                         [min-level integer?])
+         (listof integer?)]{
+
+  Return a list of geoids which cover the region @racket[r] up to
+  @racket[min-level] obtained by recursively splitting the input
+  @racket[geoid].
+
+  See @racket[geoid-level] for a discution on the geoid levels.
 
 }
 
