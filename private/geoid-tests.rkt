@@ -23,7 +23,10 @@
          math/statistics
          racket/runtime-path
          rackunit
-         al2-test-runner
+         ;; needed if `skip-test` is used in tests -- this requires a runtime
+         ;; dependency.
+
+         ;; al2-test-runner
          (except-in "geodesy.rkt"
                     earth-radius)
          "geoid.rkt"
