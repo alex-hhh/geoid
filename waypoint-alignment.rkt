@@ -3,7 +3,7 @@
 ;; GEOIDs align
 ;;
 ;; This file is part of geoid -- work efficiently with geographic data
-;; Copyright (c) 2021 Alex Harsányi <AlexHarsanyi@gmail.com>
+;; Copyright (c) 2021, 2025 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU Lesser General Public License as published by
@@ -20,6 +20,7 @@
 
 (require "private/waypoint-alignment.rkt")
 
-(provide
- waypoint-alignment-cost                ; test, doc
- )
+(provide dtw
+         dtw/memory-efficient
+         dtw/window
+         waypoint-alignment-cost)

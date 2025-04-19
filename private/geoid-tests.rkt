@@ -3,7 +3,7 @@
 ;; geoid-tests.rkt -- tests for the geoid package
 ;;
 ;; This file is part of geoid -- work efficiently with geographic data
-;; Copyright (c) 2020 Alex Harsányi <AlexHarsanyi@gmail.com>
+;; Copyright (c) 2020, 2025 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU Lesser General Public License as published by
@@ -643,18 +643,32 @@
    (test-case "dtw/memory-efficient self-cost"
      (for ([data (in-list (list data-s1 data-t1 data-s2 data-t2
                                 data-s3 data-t3 data-s4 data-t4a data-t4b))])
-       (define cost (dtw data data))
+       (define cost (dtw/memory-efficient data data))
+       ;; NOTE: the cost of a path alignment against itself should be 0, but
+       ;; we have some errors in calculating distances, this error seems to be
+       ;; just under 4cm for each waypoint
+       (check-= (/ cost (vector-length data)) 0 0.04)))
+   (test-case "dtw/window self-cost"
+     (for ([data (in-list (list data-s1 data-t1 data-s2 data-t2
+                                data-s3 data-t3 data-s4 data-t4a data-t4b))])
+       (define cost (dtw/window data data))
        ;; NOTE: the cost of a path alignment against itself should be 0, but
        ;; we have some errors in calculating distances, this error seems to be
        ;; just under 4cm for each waypoint
        (check-= (/ cost (vector-length data)) 0 0.04)))
 
-   (test-case "dtw + dtw/memory-efficient equivalence"
+   (test-case "dtw + dtw/memory-efficient + dtw/window equivalence"
      (define (check-cost s t name)
        (define cost-1 (dtw s t))
        (define cost-2 (dtw/memory-efficient s t))
+       (define cost-3 (dtw/window s t))
+       #;(printf "dtw cost: ~a, dtw/me cost: ~a, dtw/w cost ~a~%" cost-1 cost-2 cost-3)
        ;; NOTE: they should be identical!
-       (check-= cost-1 cost-2 1e-5 name))
+       (check-= cost-1 cost-2 1e-5 name)
+       ;; For windowed dtw costs, we expect them to be slightly larger (never
+       ;; smaller) than the baseline cost
+       (check-true (>= cost-3 cost-1))
+       (check-true (<= (/ cost-3 cost-1) 1.02)))
 
      (check-cost data-s1 data-t1 "s1/t1")
      (check-cost data-s2 data-t2 "s2/t2")
@@ -1257,7 +1271,7 @@
     (run-tests #:package "geoid"
                #:results-file "test-results-geoid.xml"
                ;;#:exclude '(("tiling" "Antarctica/McMurdo covering"))
-               ;;#:only '(("tiling" "angle-contains-vertex?"))
+               ;;#:only '(("waypoint-alignment"))
                hilbert-distance-test-suite
                pack-unpack-testsuite
                faces-test-suite

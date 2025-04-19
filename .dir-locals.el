@@ -5,7 +5,7 @@
          (ah-project-license . lgpl)
          (ah-spdx-license . "LGPL-3.0-or-later")
          (bug-reference-url-format . "https://github.com/alex-hhh/geoid/issues/%s")
-         (bug-reference-bug-regexp . "\\#\\(?2:[0-9]+\\)\\>")
+         (bug-reference-bug-regexp . "\\(?1:\\(?2:AB\\)?\\#\\(?3:[0-9]+\\)\\>\\)")
          ))
  (yaml-mode . ((mode . goto-address)
                (mode . bug-reference)))

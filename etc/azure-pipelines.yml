@@ -5,11 +5,11 @@
 # YAML schema reference: https://aka.ms/yaml
 
 pool:
-  vmImage: 'Ubuntu-18.04'
+  vmImage: 'ubuntu-22.04'
 
 variables:
   PACKAGE_NAME: "geoid"
-  RACKET_VERSION: 8.4-cs
+  RACKET_VERSION: 8.16-cs
   RACKET_DIR: $(Agent.BuildDirectory)/racket
   PLTSTDERR: 'error warning@optimizer'
 
