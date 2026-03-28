@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Script for installing Racket for CI use, originally by Greg Hendershott from
-# https://github.com/greghendershott/travis-racket, adapted by Alex Harsanyi.
+# Script for installing Racket for Travis use, originally by Greg Hendershott
+# from https://github.com/greghendershott/travis-racket, adapted by Alex
+# Harsanyi.
 
 # http://redsymbol.net/articles/unofficial-bash-strict-mode
 set -euo pipefail
@@ -48,7 +49,7 @@ case "$RACKET_VERSION" in
     6.[0-4] | 6.[0-4].[0-9])
         URL="${BASE}/${V}/racket-${M}${V}-x86_64-linux-ubuntu-precise.sh"
         ;;
-    7.*-cs | 8.*-cs)
+    7.*-cs | 8.*-cs | 9.*-cs)
         # NOTE: 7.4 is the first version which has a Chez variant
         V=`echo $V | sed s/-cs//`
         URL="${BASE}/${V}/racket-${M}${V}-x86_64-linux-cs.sh"
