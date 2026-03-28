@@ -1,7 +1,7 @@
 ;; waypoint-alignment.rkt -- determine how close are two GPS paths.
 ;;
 ;; This file is part of geoid -- work efficiently with geographic data
-;; Copyright (c) 2021, 2025 Alex Harsányi <AlexHarsanyi@gmail.com>
+;; Copyright (c) 2021, 2025-2026 Alex Harsányi <AlexHarsanyi@gmail.com>
 ;;
 ;; This program is free software: you can redistribute it and/or modify it
 ;; under the terms of the GNU Lesser General Public License as published by
@@ -87,10 +87,14 @@
   ;; Input data should have been prepared by `prepare-source-and-target'
   (assert (and (>= source-size target-size) (>= target-size 3)))
   (define min-window-size 50)
-  ;; A window size 5% of the target length seems to work for the data I have.
+  ;; NOTE: 28Mar2026 - increased windows size from 5 to 15% as dtw/window
+  ;; returned too high cost for similar routes.  Next time this happens, add
+  ;; some flexibility to determining the window size.
+
+  ;; A window size 15% of the target length seems to work for the data I have.
   ;; If the window is too small, we might obtain a higher cost than the
   ;; regular dtw cost, sometimes much higher.
-  (define window-size (exact-round (* 0.05 target-size)))
+  (define window-size (exact-round (* 0.15 target-size)))
   (min target-size (max min-window-size window-size)))
 
 ;; Return the cost of the optimal mapping between two paths of waypoints
