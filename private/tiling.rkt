@@ -1033,7 +1033,7 @@
   (define dot-product (+ (* s1x s2x) (* s1y s2y)))
   (if (or (zero? dot-product) (zero? s1len) (zero? s1len))
       0.0
-      (let ([angle (acos (min 1.0 (/ dot-product (* s1len s2len))))])
+      (let ([angle (assert (acos (min 1.0 (/ dot-product (* s1len s2len)))) flonum?)])
         (define cross-magnitude (- (* (- x1 x0) (- y2 y0))
                                    (* (- y1 y0) (- x2 x0))))
         (* angle (flsgn cross-magnitude)))))

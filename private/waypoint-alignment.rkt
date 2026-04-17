@@ -75,7 +75,7 @@
       (+ (* (flvector-ref s i) (flvector-ref t j))
          (* (flvector-ref s (+ i 1)) (flvector-ref t (+ j 1)))
          (* (flvector-ref s (+ i 2)) (flvector-ref t (+ j 2)))))
-    (acos (max -1.0 (min 1.0 dot))))
+    (assert (acos (max -1.0 (min 1.0 dot))) flonum?))
 
   (values n m unit-distance))
 

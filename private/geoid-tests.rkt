@@ -1262,6 +1262,22 @@
         (test-midway-point/spherical lat1 lon1 lat2 lon2)
         (test-intermediate-point/spherical lat1 lon1 lat2 lon2)))
 
+    (test-case "spherical-destination at pole returns real values"
+      ;; Starting at ~63.78°N heading due north for ~2915 km puts the
+      ;; destination at the North Pole.  The intermediate
+      ;; `(sin φ)·(cos δ) + (cos φ)·(sin δ)·(cos bearing)` rounds up to
+      ;; 1.0000000000000002 in IEEE double, so `asin` produces a
+      ;; complex result with a ~2e-8 imaginary part, which then
+      ;; propagates into the longitude computation.
+      (define λ 0.0)
+      (define φ 1.1132094410599405)
+      (define bearing 0.0)
+      (define distance 2915326.3166678636)
+      (define-values (λ-dest φ-dest)
+        (spherical-destination λ φ bearing distance))
+      (check-pred real? λ-dest "longitude should be real")
+      (check-pred real? φ-dest "latitude should be real"))
+
   ))
 
 (module+ test

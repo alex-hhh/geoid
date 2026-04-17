@@ -354,9 +354,15 @@
 (: spherical-destination (-> Real Real Real Real (values Real Real)))
 (define (spherical-destination λ φ bearing distance)
   (define δ (/ distance earth-radius))
+  ;; NOTE: the argument to `asin` is mathematically in [-1, 1], but FP
+  ;; rounding can push it slightly outside, making `asin` return a
+  ;; complex number.  Clamp before calling `asin`.
   (define φ-dest
-    (asin (+ (* (sin φ) (cos δ))
-             (* (cos φ) (sin δ) (cos bearing)))))
+    (assert
+     (asin (max -1.0
+                (min 1.0 (+ (* (sin φ) (cos δ))
+                            (* (cos φ) (sin δ) (cos bearing))))))
+     real?))
   (define λ-dest
     (+ λ
        (atan (* (sin bearing) (sin δ) (cos φ))
