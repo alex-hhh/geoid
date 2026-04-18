@@ -962,7 +962,7 @@
   (define cos-Θ (+ (* x1 x2) (* y1 y2) (* z1 z2)))
   ;; NOTE: small errors in the unit vector might bring the value below or
   ;; above 1, making `acos` return a complex number.
-  (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ)))))
+  (* earth-radius (assert (acos (max -1.0 (min 1.0 cos-Θ))) flonum?)))
 
 (: distance-from-geoid (-> Integer (-> Integer Flonum)))
 (define (distance-from-geoid g1)
@@ -972,7 +972,7 @@
     (define cos-Θ (+ (* x1 x2) (* y1 y2) (* z1 z2)))
     ;; NOTE: small errors in the unit vector might bring the value below or
     ;; above 1, making `acos` return a complex number.
-    (* earth-radius (acos (max -1.0 (min 1.0 cos-Θ))))))
+    (* earth-radius (assert (acos (max -1.0 (min 1.0 cos-Θ))) flonum?))))
 
 
 ;;............................................................. The Cell ....
